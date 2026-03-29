@@ -35,7 +35,7 @@ def main():
         update_timestamp DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
         UNIQUE KEY uk_type_key_schedule (config_type, config_key, schedule_profile)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
-    COMMENT='Amazon采集器配置表 - 支持多品牌多品类扩展'
+    COMMENT='电商采集配置表 - 当前以 Amazon 数据源为主，支持多品牌多品类扩展'
     """
 
     seed = """

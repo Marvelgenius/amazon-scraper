@@ -1,21 +1,27 @@
-# Security Policy for the Amazon Scraper Project
+# Security Policy
 
-## Disclaimer
+## Scope
 
-By using Amazon Scraper, you agree to comply with all applicable local and international laws related to data scraping, copyright, and privacy. The developers of Amazon Scraper will not be held liable for any misuse of this software. It is the user's sole responsibility to ensure adherence to all relevant laws regarding data scraping, copyright, and privacy, and to use Amazon Scraper in an ethical and legal manner, in line with both local and international regulations.
+本仓库为内部维护的电商数据采集与分析项目，当前主要覆盖 Amazon 数据采集、数据库入库、ETL 处理与分析看板。
 
-## 1. Reporting a Vulnerability
+## Responsible Use
 
-We take the privacy and security of the Amazon Scraper Project very seriously. If you have discovered a security vulnerability or have concerns about the project, we appreciate your assistance in responsibly disclosing it to us.
+使用本项目时，请遵守适用的平台规则、数据使用约束、隐私法规以及所在组织的合规要求。仓库维护者不对违规使用行为承担责任。
 
-To report a security issue or express a concern, please email Chetan Jain at [chetan@omkar.cloud](mailto:chetan@omkar.cloud). We will promptly respond to your concerns.
+## Reporting a Vulnerability
 
-## 2. Use at Your Own Risk
+如果你发现安全问题，请优先联系仓库维护者 `Yuxuan Fan`，或在当前仓库中通过协作约定的方式提交安全报告。
 
-This project is provided for ethical and legal purposes only. It must be used in compliance with all relevant local and international laws and is not intended for unauthorized or illegal use.
+若问题包含敏感细节，请不要在公开渠道直接披露完整利用方式、密钥、凭证或数据库信息。
 
-## 3. Contact
+## Response Expectations
 
-For questions regarding this security policy or the security of the Amazon Scraper Project, please contact [chetan@omkar.cloud](mailto:chetan@omkar.cloud).
+- 维护者会在确认收到报告后尽快评估影响范围
+- 若问题成立，会安排修复并在必要时通知相关协作者
+- 如涉及凭证、数据库或第三方 API，请优先完成轮换与访问控制检查
 
-The information in this `SECURITY.md` is provided "as is," without any kind of warranty.
+## Operational Notes
+
+- 请勿将真实密钥、密码或云资源凭证提交到仓库
+- 对 `.env`、数据库连接、SSH 密钥和 API Key 的变更应进行额外复核
+- 任何影响数据抓取频率、权限边界或外部服务调用方式的改动，都建议做一次安全检查

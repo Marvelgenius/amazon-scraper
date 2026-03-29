@@ -47,7 +47,7 @@ TYPE_META = {
     "category_scan": {
         "label": "类目扫描",
         "icon": "🗂️",
-        "desc": "按 Amazon 官方类目 ID 扫描，适合做类目份额。",
+        "desc": "按平台官方类目 ID 扫描，当前主要用于 Amazon 类目份额分析。",
         "key_label": "类目 ID",
         "key_placeholder": "例: 289745",
     },
@@ -344,7 +344,7 @@ def main():
         """
         <div class="cfg-banner">
             <h3>任务控制台</h3>
-            <p>在这里统一管理 Amazon 数据采集任务。你可以新增关键词、官方类目、自定义细分市场、跟踪 ASIN 和全局设置，修改会在下一轮调度时自动生效。</p>
+            <p>在这里统一管理电商数据采集任务。当前数据源以 Amazon 为主，你可以新增关键词、官方类目、自定义细分市场、跟踪 ASIN 和全局设置，修改会在下一轮调度时自动生效。</p>
         </div>
         """,
         unsafe_allow_html=True,
@@ -403,7 +403,7 @@ def _render_add_form(conn):
             new_key = st.text_input(
                 meta["key_label"],
                 placeholder=meta["key_placeholder"],
-                help="主采集键。关键词类填搜索词；ASIN 类填商品 ASIN；类目扫描填 Amazon 类目 ID；细分市场填你定义市场池的关键词。",
+                help="主采集键。关键词类填搜索词；ASIN 类填商品 ASIN；类目扫描填平台类目 ID（当前主要为 Amazon）；细分市场填你定义市场池的关键词。",
             )
             new_value = st.text_area(
                 "附加参数 JSON（可选）",
@@ -427,7 +427,7 @@ def _render_add_form(conn):
                 "适用市场",
                 value="ALL",
                 placeholder="ALL 或 US,GB,DE",
-                help="决定在哪些 Amazon 站点采集。可填 ALL，也可填逗号分隔的国家码。",
+                help="决定在哪些目标站点采集。可填 ALL，也可填逗号分隔的国家码；当前主要适用于 Amazon 站点。",
             )
             new_pages = st.number_input(
                 "搜索页数",

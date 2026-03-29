@@ -1,8 +1,9 @@
 """
-Amazon Brand Market Analysis Dashboard.
+E-commerce market analysis dashboard.
 
-Supports both legacy OutIn-specific views and generic brand/category analysis.
-Run with:  streamlit run dashboard/app.py
+Current data source is primarily Amazon. Supports both legacy OutIn-specific
+views and generic brand/category analysis.
+Run with: streamlit run dashboard/app.py
 """
 
 import os
@@ -34,7 +35,7 @@ from src.queries import (
 )
 
 st.set_page_config(
-    page_title="Amazon 品牌市场分析",
+    page_title="电商品牌市场分析",
     page_icon="📊",
     layout="wide",
 )
