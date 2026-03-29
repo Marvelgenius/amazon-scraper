@@ -78,6 +78,12 @@ python scripts/create_config_table.py
 python main.py
 ```
 
+Airflow 调度入口：
+
+```bash
+python -c "from src.tasks import task_run_postgres_pipeline; print(task_run_postgres_pipeline())"
+```
+
 启动分析仪表盘：
 
 ```bash
@@ -107,6 +113,45 @@ streamlit run dashboard/app.py
 - 当前仓库面向内部分析流程，默认假设你已经具备可用的 RapidAPI Key 和数据库环境
 - 项目中的“电商”目前主要指 Amazon 数据采集与分析场景，后续可根据需要扩展到其他平台
 - 若需控制 API 配额，建议优先减少扫描页数、缩小站点范围，并合理拆分日常任务与周任务
+
+## Server Deployment
+
+服务端建议采用 `Airflow + 本仓库代码目录` 的方式部署：
+
+1. 在服务器上拉取本仓库并安装项目依赖。
+2. 确保 Airflow worker / scheduler 使用同一份 `.env`，且具备访问 `S3`、`Secrets Manager`、bastion 和 RDS PostgreSQL 的权限。
+3. 将 `dags/amazon_postgres_pipeline_dag.py` 放入 Airflow 的 `DAGS_FOLDER`，或直接将仓库目录挂载到 Airflow 并让该 `dags/` 目录被扫描。
+4. 保证 Airflow 运行环境能导入仓库根目录下的 `src` 包。
+
+新增 DAG `amazon_postgres_data_platform` 会按以下链路执行：
+
+1. `collect_search_results`
+2. `collect_product_details`
+3. `collect_product_offers`
+4. `collect_product_reviews`
+5. `build_postgres_staging`
+6. `build_postgres_core`
+7. `build_postgres_marts`
+
+常用调度环境变量：
+
+- `AIRFLOW_DAG_AMAZON_SEARCH_CRON`
+- `AIRFLOW_AMAZON_SEARCH_QUERY`
+- `AIRFLOW_AMAZON_COUNTRY`
+- `AIRFLOW_AMAZON_SEARCH_PAGE`
+- `AIRFLOW_AMAZON_DETAIL_ASIN_LIMIT`
+- `AIRFLOW_AMAZON_OFFER_ASIN_LIMIT`
+- `AIRFLOW_AMAZON_REVIEW_ASIN_LIMIT`
+- `AIRFLOW_AMAZON_ENABLE_OFFERS`
+- `AIRFLOW_AMAZON_ENABLE_REVIEWS`
+- `AIRFLOW_AMAZON_BUSINESS_DOMAIN`
+- `AIRFLOW_AMAZON_DATASET_NAME`
+
+原始对象会落到类似下面的前缀，便于同一 bucket 下区分不同外部数据域：
+
+```text
+raw/business_domain=thirdparty-market-intelligence/source_system=amazon/dataset_name=amazon_product_catalog_search_airflow/endpoint_name=product_search/...
+```
 
 ## 致谢
 

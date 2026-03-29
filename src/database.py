@@ -7,7 +7,8 @@ from typing import Any, Dict, Iterable, List, Optional
 import pymysql
 from sshtunnel import SSHTunnelForwarder
 
-from .config import get_database_settings, get_ssh_tunnel_settings
+from .config import get_database_backend, get_database_settings, get_ssh_tunnel_settings
+from .postgres_database import close_postgres_tunnel, create_postgres_connection
 
 
 DEFAULT_RAW_PRODUCTS_TABLE = "amazon_product_raw"
@@ -25,6 +26,16 @@ def create_db_connection(
     database: Optional[str] = None,
     use_ssh_tunnel: Optional[bool] = None,
 ) -> pymysql.Connection:
+    if get_database_backend() == "postgresql":
+        return create_postgres_connection(
+            host=host,
+            port=port,
+            user=user,
+            password=password,
+            database=database,
+            use_ssh_tunnel=use_ssh_tunnel,
+        )
+
     db = get_database_settings()
     resolved = {
         "host": host or db["host"],
@@ -83,6 +94,7 @@ def close_tunnel() -> None:
     if _tunnel is not None and _tunnel.is_active:
         _tunnel.stop()
         _tunnel = None
+    close_postgres_tunnel()
 
 
 def _is_local_tunnel_target(db_settings: Dict[str, Any]) -> bool:

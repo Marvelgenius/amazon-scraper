@@ -1,7 +1,10 @@
 requests
 pymysql
 sshtunnel
+paramiko<4
 cryptography
+boto3
+psycopg2-binary
 pandas
 streamlit
 plotly

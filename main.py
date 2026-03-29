@@ -8,6 +8,8 @@ from typing import Any, Optional, Tuple
 import pymysql
 
 from src import Amazon, create_db_connection, close_tunnel
+from src.config import get_database_backend
+from src.postgres_pipeline import run_postgres_pipeline
 
 logging.basicConfig(
     level=logging.INFO,
@@ -372,6 +374,9 @@ if __name__ == "__main__":
 
     try:
         total_rows, total_errors = run_tasks(tasks, api_key, delay, connection)
+        if connection and get_database_backend() == "postgresql":
+            pipeline_counts = run_postgres_pipeline(connection)
+            logger.info("PostgreSQL pipeline completed: %s", pipeline_counts)
         logger.info("Done. total_rows=%d, total_errors=%d", total_rows, total_errors)
     finally:
         if connection:

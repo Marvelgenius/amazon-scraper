@@ -1,11 +1,14 @@
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Sequence, Union
 
+from .aws_storage import build_request_fingerprint, build_request_id
+from .config import get_database_backend
 from .database import (
     DEFAULT_RAW_PRODUCTS_TABLE,
     ensure_raw_products_table,
     insert_raw_product_rows,
 )
+from .postgres_pipeline import store_raw_api_events
 from .search import (
     get_best_sellers,
     get_product,
@@ -43,6 +46,22 @@ def _extract_asin(record: Dict[str, Any]) -> Optional[str]:
 
 
 class Amazon:
+    SOURCE_SYSTEM = "amazon"
+    DEFAULT_BUSINESS_DOMAIN = "thirdparty-market-intelligence"
+
+    @staticmethod
+    def _default_dataset_name(source_endpoint: str) -> str:
+        mapping = {
+            "product_search": "product_catalog_search",
+            "segment_search": "segment_product_catalog",
+            "product_details": "product_catalog_detail",
+            "products_by_category": "category_product_catalog",
+            "best_sellers": "bestseller_product_catalog",
+            "top_product_reviews": "product_reviews",
+            "product_offers": "product_offers",
+        }
+        return mapping.get(source_endpoint, source_endpoint)
+
     @staticmethod
     def search(
         query: Union[str, Sequence[str]],
@@ -88,7 +107,17 @@ class Amazon:
         record_create_timestamp: Optional[datetime] = None,
     ) -> List[Dict[str, Any]]:
         created_at = record_create_timestamp or datetime.now(timezone.utc)
-        base_metadata = request_metadata or {}
+        base_metadata = dict(request_metadata or {})
+        request_id = build_request_id()
+        base_metadata.setdefault("account", "default")
+        base_metadata.setdefault("business_domain", Amazon.DEFAULT_BUSINESS_DOMAIN)
+        base_metadata.setdefault("dataset_name", Amazon._default_dataset_name(source_endpoint))
+        request_fingerprint = build_request_fingerprint(
+            source_system=Amazon.SOURCE_SYSTEM,
+            endpoint_name=source_endpoint,
+            marketplace_country=country,
+            request_params=base_metadata,
+        )
         rows: List[Dict[str, Any]] = []
 
         for record in records:
@@ -100,10 +129,17 @@ class Amazon:
                 {
                     "asin": asin,
                     "record_create_timestamp": created_at,
+                    "source_system": Amazon.SOURCE_SYSTEM,
                     "source_endpoint": source_endpoint,
+                    "endpoint_name": source_endpoint,
                     "marketplace_country": country,
                     "search_query": search_query,
                     "request_metadata": base_metadata,
+                    "request_id": request_id,
+                    "request_fingerprint": request_fingerprint,
+                    "ingest_date": created_at.date(),
+                    "source_record_id": asin,
+                    "business_id": asin,
                     "api_payload": record,
                 }
             )
@@ -162,6 +198,8 @@ class Amazon:
         create_table: bool = True,
         commit: bool = True,
     ) -> int:
+        if get_database_backend() == "postgresql":
+            return store_raw_api_events(connection, rows)
         if create_table:
             ensure_raw_products_table(connection, table_name=table_name)
         return insert_raw_product_rows(
@@ -398,16 +436,33 @@ class Amazon:
         reviews = data if isinstance(data, list) else data.get("reviews", []) if isinstance(data, dict) else []
         created_at = datetime.now(timezone.utc)
         rows: List[Dict[str, Any]] = []
+        request_metadata = {**filters, "account": filters.get("account", "default")}
+        request_metadata.setdefault("business_domain", Amazon.DEFAULT_BUSINESS_DOMAIN)
+        request_metadata.setdefault("dataset_name", Amazon._default_dataset_name("top_product_reviews"))
+        request_id = build_request_id()
+        request_fingerprint = build_request_fingerprint(
+            source_system=Amazon.SOURCE_SYSTEM,
+            endpoint_name="top_product_reviews",
+            marketplace_country=country,
+            request_params=request_metadata,
+        )
         for review in reviews:
             if not isinstance(review, dict):
                 continue
             rows.append({
                 "asin": asin,
                 "record_create_timestamp": created_at,
+                "source_system": Amazon.SOURCE_SYSTEM,
                 "source_endpoint": "top_product_reviews",
+                "endpoint_name": "top_product_reviews",
                 "marketplace_country": country,
                 "search_query": None,
-                "request_metadata": {**filters},
+                "request_metadata": request_metadata,
+                "request_id": request_id,
+                "request_fingerprint": request_fingerprint,
+                "ingest_date": created_at.date(),
+                "source_record_id": review.get("review_id") or asin,
+                "business_id": asin,
                 "api_payload": review,
             })
         return rows

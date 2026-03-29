@@ -19,6 +19,11 @@ from .etl import (
     build_segment_market_share,
     detect_and_store_trend_alerts,
 )
+from .postgres_pipeline import (
+    ensure_postgres_data_platform,
+    run_postgres_pipeline,
+    store_raw_api_events,
+)
 from .rapidapi_client import RapidAmazonDataClient, RapidAPIError
 from .sales_estimator import (
     BayesianDailySalesEstimator,
@@ -49,4 +54,8 @@ from .tasks import (
     task_build_brand_market_share,
     task_build_segment_market_share,
     task_detect_trend_alerts,
+    task_build_postgres_staging,
+    task_build_postgres_core,
+    task_build_postgres_marts,
+    task_run_postgres_pipeline,
 )

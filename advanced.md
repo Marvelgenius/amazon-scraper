@@ -14,8 +14,15 @@
 1. 先在 `.env` 中配置好 API 和数据库连接
 2. 执行 `python scripts/create_config_table.py`
 3. 根据业务需要修改配置表中的采集任务
-4. 运行 `python main.py` 或调度任务进行采集
+4. 本地可运行 `python main.py`，服务器建议通过 Airflow DAG `amazon_postgres_data_platform` 调度
 5. 运行 `streamlit run dashboard/app.py` 查看分析结果
+
+### Airflow On Server
+
+- DAG 文件位于 `dags/amazon_postgres_pipeline_dag.py`
+- 调度链路为 `search -> details/offers/reviews -> staging -> core -> mart`
+- 生产部署时建议让 Airflow 与本仓库共享同一份 `.env`
+- 如果同一个 S3 bucket 中承载多个外部来源数据，优先通过 `business_domain` 和 `dataset_name` 区分数据对象路径
 
 ### Cost Control
 
