@@ -15,6 +15,7 @@ from .database import (
     close_tunnel,
     create_db_connection,
 )
+from .debug_runtime import debug_log
 from .etl import (
     build_brand_market_share,
     build_coffee_market_share,
@@ -84,6 +85,24 @@ def task_fetch_and_store_search(
     table_name: str = DEFAULT_RAW_PRODUCTS_TABLE,
     **filters: Any,
 ) -> List[Dict[str, Any]]:
+    # region agent log
+    debug_log(
+        hypothesis_id="H8",
+        location="src/tasks.py:task_fetch_and_store_search",
+        message="Search task starting",
+        data={
+            "query_type": type(query).__name__,
+            "query_preview": query if isinstance(query, str) else list(query)[:3],
+            "country": country,
+            "page": page,
+            "database": database,
+            "table_name": table_name,
+            "key_arg_present": bool(key),
+            "request_metadata_keys": sorted(filters.get("request_metadata", {}).keys())[:12]
+            if isinstance(filters.get("request_metadata"), dict) else [],
+        },
+    )
+    # endregion
     connection = create_db_connection(database=database)
     try:
         rows = Amazon.fetch_and_store_search_results(

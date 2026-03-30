@@ -9,11 +9,13 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 import pandas as pd
-import pymysql
 import streamlit as st
 
-CONFIG_DB = "gurysk_app"
-CONFIG_TABLE = "app_scraper_config"
+from src.config import get_database_backend
+from src.db_compat import get_dict_cursor, is_integrity_error, normalize_rows, ping_connection
+
+CONFIG_DB = None if get_database_backend() == "postgresql" else "gurysk_app"
+CONFIG_TABLE = "gurysk_app.app_scraper_config" if get_database_backend() == "postgresql" else "app_scraper_config"
 
 TYPE_META = {
     "product_query": {
@@ -106,14 +108,13 @@ def _get_config_conn():
     from src.database import create_db_connection
 
     conn = create_db_connection(database=CONFIG_DB)
-    conn.cursorclass = pymysql.cursors.DictCursor
     return conn
 
 
 def _healthy_conn():
     conn = _get_config_conn()
     try:
-        conn.ping(reconnect=True)
+        ping_connection(conn)
         return conn
     except Exception:
         _get_config_conn.clear()
@@ -121,9 +122,9 @@ def _healthy_conn():
 
 
 def _load_configs(conn) -> pd.DataFrame:
-    with conn.cursor() as cur:
+    with get_dict_cursor(conn) as cur:
         cur.execute(f"SELECT * FROM {CONFIG_TABLE} ORDER BY config_type, id")
-        rows = cur.fetchall()
+        rows = normalize_rows(cur.fetchall())
     return pd.DataFrame(rows) if rows else pd.DataFrame()
 
 
@@ -485,10 +486,12 @@ def _render_add_form(conn):
                 _insert_config(conn, data)
                 st.success(f"已添加：[{TYPE_META[new_type]['label']}] {new_key}")
                 st.rerun()
-            except pymysql.err.IntegrityError:
-                st.error("该配置已存在（类型 + 主键 + 调度频率 组合必须唯一）")
             except Exception as exc:
+                if is_integrity_error(exc):
+                    st.error("该配置已存在（类型 + 主键 + 调度频率 组合必须唯一）")
+                    return
                 st.error(f"添加失败：{exc}")
+                return
 
 
 def _status_chip(is_active: bool) -> str:

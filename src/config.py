@@ -3,12 +3,13 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 from dotenv import load_dotenv
+from .debug_runtime import debug_log
 
 load_dotenv(Path(__file__).resolve().parent.parent / ".env", override=True)
 
 DEFAULT_RAPIDAPI_HOST = "real-time-amazon-data.p.rapidapi.com"
 DEFAULT_RAPIDAPI_BASE_URL = f"https://{DEFAULT_RAPIDAPI_HOST}"
-DEFAULT_DB_BACKEND = "mysql"
+DEFAULT_DB_BACKEND = "postgresql"
 POSTGRES_BACKENDS = {"postgres", "postgresql"}
 
 
@@ -40,16 +41,45 @@ def _expand_path(path_value: str) -> str:
 def get_rapidapi_settings(api_key: Optional[str] = None) -> Dict[str, Any]:
     resolved_api_key = api_key or os.getenv("RAPIDAPI_KEY")
     if not resolved_api_key:
+        # region agent log
+        debug_log(
+            hypothesis_id="H6",
+            location="src/config.py:get_rapidapi_settings",
+            message="RapidAPI settings missing API key",
+            data={
+                "api_key_arg_present": bool(api_key),
+                "env_key_present": bool(os.getenv("RAPIDAPI_KEY")),
+                "host": os.getenv("RAPIDAPI_HOST", DEFAULT_RAPIDAPI_HOST),
+                "base_url": os.getenv("RAPIDAPI_BASE_URL", DEFAULT_RAPIDAPI_BASE_URL),
+            },
+        )
+        # endregion
         raise ValueError(
             "RapidAPI key is required. Set RAPIDAPI_KEY or pass key/api_key explicitly."
         )
 
-    return {
+    settings = {
         "api_key": resolved_api_key,
         "api_host": os.getenv("RAPIDAPI_HOST", DEFAULT_RAPIDAPI_HOST),
         "base_url": os.getenv("RAPIDAPI_BASE_URL", DEFAULT_RAPIDAPI_BASE_URL),
         "timeout": int(os.getenv("RAPIDAPI_TIMEOUT", "30")),
     }
+    # region agent log
+    debug_log(
+        hypothesis_id="H6",
+        location="src/config.py:get_rapidapi_settings",
+        message="RapidAPI settings resolved",
+        data={
+            "api_key_arg_present": bool(api_key),
+            "env_key_present": bool(os.getenv("RAPIDAPI_KEY")),
+            "api_key_length": len(str(resolved_api_key)),
+            "api_host": settings["api_host"],
+            "base_url": settings["base_url"],
+            "timeout": settings["timeout"],
+        },
+    )
+    # endregion
+    return settings
 
 
 def get_database_backend() -> str:

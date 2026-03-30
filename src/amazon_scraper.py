@@ -8,6 +8,7 @@ from .database import (
     ensure_raw_products_table,
     insert_raw_product_rows,
 )
+from .debug_runtime import debug_log
 from .postgres_pipeline import store_raw_api_events
 from .search import (
     get_best_sellers,
@@ -27,7 +28,21 @@ def _ensure_list(values: Union[str, Sequence[str]]) -> List[str]:
 
 def _extract_search_products(payload: Dict[str, Any]) -> List[Dict[str, Any]]:
     data = payload.get("data", payload)
-    products = data.get("products", [])
+    products = data.get("products", []) if isinstance(data, dict) else []
+    # region agent log
+    debug_log(
+        hypothesis_id="H1",
+        location="src/amazon_scraper.py:_extract_search_products",
+        message="Search payload extraction summary",
+        data={
+            "payload_type": type(payload).__name__,
+            "payload_keys": sorted(payload.keys())[:12] if isinstance(payload, dict) else [],
+            "data_type": type(data).__name__,
+            "data_keys": sorted(data.keys())[:12] if isinstance(data, dict) else [],
+            "products_count": len(products) if isinstance(products, list) else None,
+        },
+    )
+    # endregion
     if not isinstance(products, list):
         return []
     return products
@@ -108,6 +123,8 @@ class Amazon:
     ) -> List[Dict[str, Any]]:
         created_at = record_create_timestamp or datetime.now(timezone.utc)
         base_metadata = dict(request_metadata or {})
+        if search_query:
+            base_metadata.setdefault("search_query", search_query)
         request_id = build_request_id()
         base_metadata.setdefault("account", "default")
         base_metadata.setdefault("business_domain", Amazon.DEFAULT_BUSINESS_DOMAIN)
@@ -119,10 +136,15 @@ class Amazon:
             request_params=base_metadata,
         )
         rows: List[Dict[str, Any]] = []
+        skipped_missing_asin = 0
+        missing_asin_keys: List[List[str]] = []
 
         for record in records:
             asin = _extract_asin(record)
             if not asin:
+                skipped_missing_asin += 1
+                if isinstance(record, dict) and len(missing_asin_keys) < 3:
+                    missing_asin_keys.append(sorted(record.keys())[:12])
                 continue
 
             rows.append(
@@ -143,6 +165,23 @@ class Amazon:
                     "api_payload": record,
                 }
             )
+
+        # region agent log
+        debug_log(
+            hypothesis_id="H2",
+            location="src/amazon_scraper.py:build_raw_product_rows",
+            message="Raw row build summary",
+            data={
+                "source_endpoint": source_endpoint,
+                "country": country,
+                "input_records": len(records),
+                "output_rows": len(rows),
+                "skipped_missing_asin": skipped_missing_asin,
+                "missing_asin_key_samples": missing_asin_keys,
+                "sample_output_asins": [row["asin"] for row in rows[:3]],
+            },
+        )
+        # endregion
 
         return rows
 

@@ -11,6 +11,7 @@ from .aws_storage import (
     build_s3_key,
     put_json_to_s3,
 )
+from .debug_runtime import debug_log
 from .postgres_database import bulk_insert_raw_events, execute_sql_file
 
 SQL_DIR = Path(__file__).resolve().parent.parent / "sql" / "postgres"
@@ -21,6 +22,7 @@ SQL_FILES = [
     "030_core.sql",
     "040_mart.sql",
     "050_ops.sql",
+    "060_app_views.sql",
 ]
 
 
@@ -200,6 +202,25 @@ def store_raw_api_events(connection, rows: Iterable[Dict[str, Any]]) -> int:
     inserted = bulk_insert_raw_events(connection, normalized_rows)
     _upsert_api_request_logs(connection, normalized_rows)
     _write_dead_letters(connection, dead_letters)
+    # region agent log
+    debug_log(
+        hypothesis_id="H4",
+        location="src/postgres_pipeline.py:store_raw_api_events",
+        message="Raw event storage summary",
+        data={
+            "normalized_rows": len(normalized_rows),
+            "dead_letters": len(dead_letters),
+            "inserted": inserted,
+            "sample_endpoint": normalized_rows[0]["endpoint_name"] if normalized_rows else None,
+            "sample_marketplace": normalized_rows[0]["marketplace_country"] if normalized_rows else None,
+            "sample_payload_keys": (
+                sorted(normalized_rows[0]["response_body_jsonb"].keys())[:12]
+                if normalized_rows and isinstance(normalized_rows[0].get("response_body_jsonb"), dict)
+                else []
+            ),
+        },
+    )
+    # endregion
     return inserted
 
 
@@ -305,7 +326,24 @@ def build_staging_product_snapshot(connection) -> int:
                 COALESCE(
                     response_body_jsonb -> 'product_information' ->> 'Brand',
                     response_body_jsonb -> 'product_information' ->> 'brand',
-                    response_body_jsonb ->> 'brand'
+                    response_body_jsonb ->> 'brand',
+                    NULLIF(
+                        REGEXP_REPLACE(
+                            split_part(
+                                COALESCE(
+                                    response_body_jsonb ->> 'product_byline',
+                                    response_body_jsonb ->> 'product_title',
+                                    ''
+                                ),
+                                ' ',
+                                1
+                            ),
+                            '(^[[:punct:]]+|[[:punct:]]+$)',
+                            '',
+                            'g'
+                        ),
+                        ''
+                    )
                 ),
                 ''
             ),
@@ -316,13 +354,14 @@ def build_staging_product_snapshot(connection) -> int:
             NULLIF(REGEXP_REPLACE(COALESCE(response_body_jsonb ->> 'product_num_reviews', ''), '[^0-9]', '', 'g'), '')::integer,
             NULLIF(response_body_jsonb ->> 'sales_volume', ''),
             COALESCE(
-                response_body_jsonb -> 'category' ->> 'id',
                 response_body_jsonb #>> '{category_path,-1,id}',
-                NULLIF(REPLACE(split_part(NULLIF(response_body_jsonb ->> 'search_query', ''), ':', 2), 'category:', ''), '')
+                response_body_jsonb -> 'category' ->> 'id',
+                NULLIF(request_params_json ->> 'category_id', ''),
+                NULLIF(split_part(NULLIF(request_params_json ->> 'search_query', ''), ':', 2), '')
             ),
             COALESCE(
-                response_body_jsonb -> 'category' ->> 'name',
                 response_body_jsonb #>> '{category_path,-1,name}',
+                response_body_jsonb -> 'category' ->> 'name',
                 request_params_json ->> 'category_name'
             ),
             request_params_json ->> 'segment_name',
@@ -861,8 +900,38 @@ def build_mart_segment_market_share(connection) -> int:
 
 def run_postgres_pipeline(connection) -> Dict[str, int]:
     ensure_postgres_data_platform(connection)
+    staging_products = build_staging_product_snapshot(connection)
+    sample_staging_row: Optional[Sequence[Any]] = None
+    with connection.cursor() as cursor:
+        cursor.execute(
+            """
+            SELECT raw_event_id, asin, product_title, brand, currency, price, category_id, category_name
+            FROM staging.stg_product_snapshot
+            ORDER BY raw_event_id DESC
+            LIMIT 1
+            """
+        )
+        sample_staging_row = cursor.fetchone()
+    # region agent log
+    debug_log(
+        hypothesis_id="H5",
+        location="src/postgres_pipeline.py:run_postgres_pipeline",
+        message="Staging product snapshot sample",
+        data={
+            "staging_products": staging_products,
+            "latest_raw_event_id": sample_staging_row[0] if sample_staging_row else None,
+            "latest_asin": sample_staging_row[1] if sample_staging_row else None,
+            "latest_title": sample_staging_row[2] if sample_staging_row else None,
+            "latest_brand": sample_staging_row[3] if sample_staging_row else None,
+            "latest_currency": sample_staging_row[4] if sample_staging_row else None,
+            "latest_price": str(sample_staging_row[5]) if sample_staging_row and sample_staging_row[5] is not None else None,
+            "latest_category_id": sample_staging_row[6] if sample_staging_row else None,
+            "latest_category_name": sample_staging_row[7] if sample_staging_row else None,
+        },
+    )
+    # endregion
     result = {
-        "staging_products": build_staging_product_snapshot(connection),
+        "staging_products": staging_products,
         "staging_reviews": build_staging_review_event(connection),
         "staging_offers": build_staging_offer_snapshot(connection),
         "core_dimensions": build_core_dimensions(connection),
@@ -873,6 +942,14 @@ def run_postgres_pipeline(connection) -> Dict[str, int]:
         "mart_brand_market_share": build_mart_brand_market_share(connection),
         "mart_segment_market_share": build_mart_segment_market_share(connection),
     }
+    # region agent log
+    debug_log(
+        hypothesis_id="H5",
+        location="src/postgres_pipeline.py:run_postgres_pipeline",
+        message="Postgres pipeline step counts",
+        data=result,
+    )
+    # endregion
     return result
 
 

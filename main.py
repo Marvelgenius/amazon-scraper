@@ -5,10 +5,9 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Optional, Tuple
 
-import pymysql
-
 from src import Amazon, create_db_connection, close_tunnel
 from src.config import get_database_backend
+from src.db_compat import get_dict_cursor, normalize_rows
 from src.postgres_pipeline import run_postgres_pipeline
 
 logging.basicConfig(
@@ -23,8 +22,8 @@ ALL_COUNTRIES = [
     "BE", "EG", "ZA", "IE",
 ]
 
-CONFIG_DB = "gurysk_app"
-CONFIG_TABLE = "app_scraper_config"
+CONFIG_DB = None if get_database_backend() == "postgresql" else "gurysk_app"
+CONFIG_TABLE = "gurysk_app.app_scraper_config" if get_database_backend() == "postgresql" else "app_scraper_config"
 
 
 @dataclass
@@ -54,11 +53,11 @@ def load_config_from_db(profile: str) -> Optional[Tuple[list[ScrapeTask], float]
     try:
         conn = create_db_connection(database=CONFIG_DB)
     except Exception:
-        logger.warning("Cannot connect to %s to read config, falling back to env vars", CONFIG_DB)
+        logger.warning("Cannot connect to config store, falling back to env vars")
         return None
 
     try:
-        with conn.cursor(pymysql.cursors.DictCursor) as cur:
+        with get_dict_cursor(conn) as cur:
             cur.execute(
                 f"SELECT config_type, config_key, config_value, countries, pages "
                 f"FROM {CONFIG_TABLE} "
@@ -66,7 +65,7 @@ def load_config_from_db(profile: str) -> Optional[Tuple[list[ScrapeTask], float]
                 f"ORDER BY config_type, id",
                 (profile,),
             )
-            rows = cur.fetchall()
+            rows = normalize_rows(cur.fetchall())
 
         if not rows:
             logger.warning("No active config rows for profile=%s, falling back to env vars", profile)

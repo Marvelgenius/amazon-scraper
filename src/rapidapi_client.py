@@ -3,6 +3,7 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Union
 import requests
 
 from .config import get_rapidapi_settings
+from .debug_runtime import debug_log
 
 
 class RapidAPIError(RuntimeError):
@@ -39,15 +40,73 @@ class RapidAmazonDataClient:
         try:
             payload = response.json()
         except ValueError as exc:
+            # region agent log
+            debug_log(
+                hypothesis_id="H9",
+                location="src/rapidapi_client.py:_request",
+                message="RapidAPI returned non-JSON response",
+                data={
+                    "endpoint": endpoint,
+                    "status_code": response.status_code,
+                    "host": self.api_host,
+                    "base_url": self.base_url,
+                    "param_keys": sorted(filtered_params.keys()),
+                    "body_prefix": response.text[:200],
+                },
+            )
+            # endregion
             raise RapidAPIError(
                 f"RapidAPI returned a non-JSON response with status {response.status_code}."
             ) from exc
 
         if not response.ok:
             message = payload.get("message") if isinstance(payload, dict) else str(payload)
+            # region agent log
+            debug_log(
+                hypothesis_id="H9",
+                location="src/rapidapi_client.py:_request",
+                message="RapidAPI request failed",
+                data={
+                    "endpoint": endpoint,
+                    "status_code": response.status_code,
+                    "host": self.api_host,
+                    "base_url": self.base_url,
+                    "param_keys": sorted(filtered_params.keys()),
+                    "message": str(message)[:300],
+                    "top_level_keys": sorted(payload.keys())[:12] if isinstance(payload, dict) else [],
+                },
+            )
+            # endregion
             raise RapidAPIError(
                 f"RapidAPI request failed with status {response.status_code}: {message}"
             )
+
+        # region agent log
+        debug_log(
+            hypothesis_id="H1",
+            location="src/rapidapi_client.py:_request",
+            message="RapidAPI response envelope summary",
+            data={
+                "endpoint": endpoint,
+                "status_code": response.status_code,
+                "top_level_type": type(payload).__name__,
+                "top_level_keys": sorted(payload.keys())[:12] if isinstance(payload, dict) else [],
+                "data_type": type(payload.get("data")).__name__ if isinstance(payload, dict) and "data" in payload else None,
+                "data_keys": (
+                    sorted(payload["data"].keys())[:12]
+                    if isinstance(payload, dict) and isinstance(payload.get("data"), dict)
+                    else []
+                ),
+                "product_count": (
+                    len(payload["data"].get("products", []))
+                    if isinstance(payload, dict) and isinstance(payload.get("data"), dict)
+                    and isinstance(payload["data"].get("products"), list)
+                    else None
+                ),
+                "param_keys": sorted(filtered_params.keys()),
+            },
+        )
+        # endregion
 
         return payload
 

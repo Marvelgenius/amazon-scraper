@@ -1,5 +1,6 @@
 import hashlib
 import json
+import logging
 from datetime import datetime
 from typing import Any, Dict, Optional
 from uuid import uuid4
@@ -7,6 +8,10 @@ from uuid import uuid4
 import boto3
 
 from .config import get_aws_settings, get_s3_settings
+
+
+# Keep actionable AWS warnings/errors, but suppress repetitive credential discovery logs.
+logging.getLogger("botocore.credentials").setLevel(logging.WARNING)
 
 
 def _build_boto3_session():

@@ -1,10 +1,15 @@
 import json
+import logging
 import os
 from typing import Any, Dict
 
 import boto3
 
 from .config import get_aws_settings, get_postgres_settings
+
+
+# Keep actionable AWS warnings/errors, but suppress repetitive credential discovery logs.
+logging.getLogger("botocore.credentials").setLevel(logging.WARNING)
 
 
 def _build_boto3_session():

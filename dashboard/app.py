@@ -19,6 +19,7 @@ import streamlit as st
 from plotly.subplots import make_subplots
 
 from src.database import create_db_connection
+from src.db_compat import ping_connection
 from src.queries import (
     get_brand_market_share,
     get_brand_market_share_trend,
@@ -49,7 +50,7 @@ def _get_connection():
 def _get_healthy_connection():
     conn = _get_connection()
     try:
-        conn.ping(reconnect=True)
+        ping_connection(conn)
         return conn
     except Exception:
         _get_connection.clear()
