@@ -11,6 +11,7 @@ CREATE TABLE IF NOT EXISTS mart.mart_product_daily_metrics (
     current_price NUMERIC(18, 4),
     original_price NUMERIC(18, 4),
     discount_pct NUMERIC(8, 4),
+    bsr_rank INTEGER,
     avg_star_rating NUMERIC(8, 4),
     review_count INTEGER,
     is_best_seller BOOLEAN NOT NULL DEFAULT FALSE,

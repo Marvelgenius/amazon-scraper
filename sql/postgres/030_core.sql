@@ -52,6 +52,7 @@ CREATE TABLE IF NOT EXISTS core.fact_inventory_snapshot (
     asin TEXT NOT NULL,
     category_id TEXT,
     category_name TEXT,
+    bsr_rank INTEGER,
     segment_name TEXT,
     segment_keyword TEXT,
     inventory_status TEXT,

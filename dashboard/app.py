@@ -20,26 +20,146 @@ from plotly.subplots import make_subplots
 
 from src.database import create_db_connection
 from src.db_compat import ping_connection
-from src.queries import (
-    get_brand_market_share,
-    get_brand_market_share_trend,
-    get_daily_sales_estimates,
-    get_generic_filter_options,
-    get_product_daily_metrics,
-    get_segment_daily_sales_estimates,
-    get_segment_estimation_stats,
-    get_segment_filter_options,
-    get_segment_market_share,
-    get_segment_market_share_trend,
-    get_segment_product_daily_metrics,
-    get_trend_alerts,
-)
+from src import queries as _q
+
+CACHE_TTL = 300  # 5 minutes
+
+
+@st.cache_data(ttl=CACHE_TTL, show_spinner=False)
+def _cached_generic_filter_options(_conn, brand=None, category_name=None):
+    return _q.get_generic_filter_options(_conn, brand=brand, category_name=category_name)
+
+
+@st.cache_data(ttl=CACHE_TTL, show_spinner=False)
+def _cached_segment_filter_options(_conn, brand=None, segment_name=None):
+    return _q.get_segment_filter_options(_conn, brand=brand, segment_name=segment_name)
+
+
+@st.cache_data(ttl=CACHE_TTL, show_spinner=False)
+def _cached_daily_sales_estimates(_conn, brand=None, category_name=None, marketplace=None, start_date=None, end_date=None, asins=None):
+    return _q.get_daily_sales_estimates(_conn, brand=brand, category_name=category_name, marketplace=marketplace, start_date=start_date, end_date=end_date, asins=asins)
+
+
+@st.cache_data(ttl=CACHE_TTL, show_spinner=False)
+def _cached_segment_daily_sales_estimates(_conn, brand=None, segment_name=None, marketplace=None, start_date=None, end_date=None, asins=None):
+    return _q.get_segment_daily_sales_estimates(_conn, brand=brand, segment_name=segment_name, marketplace=marketplace, start_date=start_date, end_date=end_date, asins=asins)
+
+
+@st.cache_data(ttl=CACHE_TTL, show_spinner=False)
+def _cached_product_daily_metrics(_conn, brand=None, category_name=None, marketplace=None, start_date=None, end_date=None, asins=None):
+    return _q.get_product_daily_metrics(_conn, brand=brand, category_name=category_name, marketplace=marketplace, start_date=start_date, end_date=end_date, asins=asins)
+
+
+@st.cache_data(ttl=CACHE_TTL, show_spinner=False)
+def _cached_segment_product_daily_metrics(_conn, brand=None, segment_name=None, marketplace=None, start_date=None, end_date=None, asins=None):
+    return _q.get_segment_product_daily_metrics(_conn, brand=brand, segment_name=segment_name, marketplace=marketplace, start_date=start_date, end_date=end_date, asins=asins)
+
+
+@st.cache_data(ttl=CACHE_TTL, show_spinner=False)
+def _cached_brand_market_share(_conn, category_name=None, marketplace=None, target_date=None):
+    return _q.get_brand_market_share(_conn, category_name=category_name, marketplace=marketplace, target_date=target_date)
+
+
+@st.cache_data(ttl=CACHE_TTL, show_spinner=False)
+def _cached_brand_market_share_trend(_conn, brand="", category_name=None, marketplace=None, start_date=None, end_date=None):
+    return _q.get_brand_market_share_trend(_conn, brand=brand, category_name=category_name, marketplace=marketplace, start_date=start_date, end_date=end_date)
+
+
+@st.cache_data(ttl=CACHE_TTL, show_spinner=False)
+def _cached_brand_category_share_trend(_conn, brand="", marketplace=None, start_date=None, end_date=None):
+    return _q.get_brand_category_share_trend(_conn, brand=brand, marketplace=marketplace, start_date=start_date, end_date=end_date)
+
+
+@st.cache_data(ttl=CACHE_TTL, show_spinner=False)
+def _cached_segment_market_share(_conn, segment_name=None, marketplace=None, target_date=None):
+    return _q.get_segment_market_share(_conn, segment_name=segment_name, marketplace=marketplace, target_date=target_date)
+
+
+@st.cache_data(ttl=CACHE_TTL, show_spinner=False)
+def _cached_segment_market_share_trend(_conn, brand="", segment_name=None, marketplace=None, start_date=None, end_date=None):
+    return _q.get_segment_market_share_trend(_conn, brand=brand, segment_name=segment_name, marketplace=marketplace, start_date=start_date, end_date=end_date)
+
+
+@st.cache_data(ttl=CACHE_TTL, show_spinner=False)
+def _cached_segment_estimation_stats(_conn, segment_name=None, marketplace=None, target_date=None):
+    return _q.get_segment_estimation_stats(_conn, segment_name=segment_name, marketplace=marketplace, target_date=target_date)
+
+
+@st.cache_data(ttl=CACHE_TTL, show_spinner=False)
+def _cached_trend_alerts(_conn, brand=None, marketplace=None, start_date=None):
+    return _q.get_trend_alerts(_conn, brand=brand, marketplace=marketplace, start_date=start_date)
 
 st.set_page_config(
     page_title="电商品牌市场分析",
     page_icon="📊",
     layout="wide",
 )
+
+
+def _inject_styles() -> None:
+    st.markdown(
+        """
+        <style>
+        .stApp {
+            background: linear-gradient(180deg, #f8fafc 0%, #eef2ff 100%);
+        }
+        [data-testid="stSidebar"] {
+            background: linear-gradient(180deg, rgba(255,255,255,0.95), rgba(241,245,249,0.98));
+            border-right: 1px solid rgba(148,163,184,0.18);
+        }
+        .app-hero {
+            padding: 1.2rem 1.25rem;
+            border-radius: 20px;
+            background: rgba(255,255,255,0.82);
+            border: 1px solid rgba(148,163,184,0.18);
+            box-shadow: 0 18px 40px rgba(15,23,42,0.06);
+            margin-bottom: 1rem;
+        }
+        .app-hero h2 {
+            margin: 0 0 0.35rem 0;
+            color: #0f172a;
+            font-size: 1.45rem;
+        }
+        .app-hero p {
+            margin: 0;
+            color: #475569;
+            line-height: 1.55;
+        }
+        .app-filter-bar {
+            padding: 0.7rem 0.95rem;
+            border-radius: 16px;
+            background: rgba(255,255,255,0.74);
+            border: 1px solid rgba(148,163,184,0.16);
+            margin: 0.55rem 0 1rem 0;
+            color: #334155;
+        }
+        div[data-testid="stMetric"] {
+            background: rgba(255,255,255,0.76);
+            border: 1px solid rgba(148,163,184,0.18);
+            padding: 0.85rem 1rem;
+            border-radius: 18px;
+            box-shadow: 0 10px 30px rgba(15,23,42,0.04);
+        }
+        div[data-testid="stForm"] {
+            background: rgba(255,255,255,0.72);
+            border: 1px solid rgba(148,163,184,0.16);
+            border-radius: 18px;
+            padding: 0.75rem 0.85rem;
+        }
+        .stButton>button {
+            border-radius: 999px;
+            border: 1px solid rgba(79,70,229,0.18);
+            background: linear-gradient(180deg, #4338ca, #4f46e5);
+            color: white;
+            font-weight: 600;
+        }
+        .stTabs [data-baseweb="tab"] {
+            font-weight: 600;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
 
 
 @st.cache_resource
@@ -59,6 +179,7 @@ def _get_healthy_connection():
 
 def main() -> None:
     conn = _get_healthy_connection()
+    _inject_styles()
     _render_generic_page(conn)
 
 
@@ -67,12 +188,19 @@ def main() -> None:
 # =========================================================================
 
 def _render_generic_page(conn) -> None:
-    st.title("品牌市场分析")
-    st.caption("统一分析任意品牌在官方类目或自定义细分市场中的日销量估算、价格折扣、消费者评价、市场份额与趋势预警。")
+    st.markdown(
+        """
+        <div class="app-hero">
+            <h2>品牌市场分析</h2>
+            <p>统一分析任意品牌在官方类目或自定义细分市场中的日销量估算、价格折扣、消费者评价、市场份额与趋势预警。</p>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
     try:
-        category_base_options = get_generic_filter_options(conn)
-        segment_base_options = get_segment_filter_options(conn)
+        category_base_options = _cached_generic_filter_options(conn)
+        segment_base_options = _cached_segment_filter_options(conn)
     except Exception as e:
         _get_connection.clear()
         st.error(f"数据库连接或查询失败: {e}")
@@ -105,7 +233,7 @@ def _render_generic_page(conn) -> None:
         brand = preset_brand or None
 
         if scope_type == "官方类目":
-            brand_scoped_options = get_generic_filter_options(conn, brand=brand)
+            brand_scoped_options = _cached_generic_filter_options(conn, brand=brand)
             scope_choices = brand_scoped_options.get("categories", [])
             scope_pick = st.selectbox(
                 "类目名称",
@@ -115,9 +243,9 @@ def _render_generic_page(conn) -> None:
             )
             category_name = scope_pick or None
             segment_name = None
-            scoped_options = get_generic_filter_options(conn, brand=brand, category_name=category_name)
+            scoped_options = _cached_generic_filter_options(conn, brand=brand, category_name=category_name)
         else:
-            brand_scoped_options = get_segment_filter_options(conn, brand=brand)
+            brand_scoped_options = _cached_segment_filter_options(conn, brand=brand)
             scope_choices = brand_scoped_options.get("segments", [])
             scope_pick = st.selectbox(
                 "细分市场名称",
@@ -127,7 +255,7 @@ def _render_generic_page(conn) -> None:
             )
             segment_name = scope_pick or None
             category_name = None
-            scoped_options = get_segment_filter_options(conn, brand=brand, segment_name=segment_name)
+            scoped_options = _cached_segment_filter_options(conn, brand=brand, segment_name=segment_name)
         mp_map = scoped_options.get("marketplace_asin_map", {})
         marketplaces = sorted(mp_map.keys())
         marketplace_pick = st.selectbox(
@@ -214,7 +342,10 @@ def _render_generic_page(conn) -> None:
     if start_str and end_str:
         active_filters.append(f"日期：`{start_str}` 至 `{end_str}`")
     if active_filters:
-        st.markdown(" | ".join(active_filters))
+        st.markdown(
+            f'<div class="app-filter-bar">{" | ".join(active_filters)}</div>',
+            unsafe_allow_html=True,
+        )
 
     if scope_type == "自定义细分市场":
         st.info("当前为**自定义细分市场**模式：市场范围由关键词返回结果构成，为样本估计口径，份额与总量会展示不确定性区间与稳定性指标。")
@@ -245,18 +376,18 @@ def _render_generic_page(conn) -> None:
 
     with tab3:
         if scope_type == "官方类目":
-            _render_brand_share_tab(conn, brand, category_name, marketplace, end_str)
+            _render_brand_share_tab(conn, brand, category_name, marketplace, start_str, end_str)
         else:
-            _render_segment_share_tab(conn, brand, segment_name, marketplace, end_str)
+            _render_segment_share_tab(conn, brand, segment_name, marketplace, start_str, end_str)
 
     with tab4:
         _render_alerts_tab(conn, brand, marketplace, start_str)
 
 
 def _render_sales_estimate_tab(conn, brand, category_name, marketplace, start_str, end_str, asins):
-    est_df = get_daily_sales_estimates(
+    est_df = _cached_daily_sales_estimates(
         conn, brand=brand, category_name=category_name,
-        marketplace=marketplace, start_date=start_str, end_date=end_str, asins=asins,
+        marketplace=marketplace, start_date=start_str, end_date=end_str, asins=tuple(asins) if asins else None,
     )
 
     if est_df.empty:
@@ -340,9 +471,9 @@ def _render_sales_estimate_tab(conn, brand, category_name, marketplace, start_st
 
 
 def _render_segment_sales_estimate_tab(conn, brand, segment_name, marketplace, start_str, end_str, asins):
-    est_df = get_segment_daily_sales_estimates(
+    est_df = _cached_segment_daily_sales_estimates(
         conn, brand=brand, segment_name=segment_name,
-        marketplace=marketplace, start_date=start_str, end_date=end_str, asins=asins,
+        marketplace=marketplace, start_date=start_str, end_date=end_str, asins=tuple(asins) if asins else None,
     )
 
     if est_df.empty:
@@ -397,9 +528,9 @@ def _render_segment_sales_estimate_tab(conn, brand, segment_name, marketplace, s
 
 
 def _render_price_discount_tab(conn, brand, category_name, marketplace, start_str, end_str, asins):
-    metrics_df = get_product_daily_metrics(
+    metrics_df = _cached_product_daily_metrics(
         conn, brand=brand, category_name=category_name,
-        marketplace=marketplace, start_date=start_str, end_date=end_str, asins=asins,
+        marketplace=marketplace, start_date=start_str, end_date=end_str, asins=tuple(asins) if asins else None,
     )
 
     if metrics_df.empty:
@@ -461,9 +592,9 @@ def _render_price_discount_tab(conn, brand, category_name, marketplace, start_st
 
 
 def _render_segment_price_discount_tab(conn, brand, segment_name, marketplace, start_str, end_str, asins):
-    metrics_df = get_segment_product_daily_metrics(
+    metrics_df = _cached_segment_product_daily_metrics(
         conn, brand=brand, segment_name=segment_name,
-        marketplace=marketplace, start_date=start_str, end_date=end_str, asins=asins,
+        marketplace=marketplace, start_date=start_str, end_date=end_str, asins=tuple(asins) if asins else None,
     )
 
     if metrics_df.empty:
@@ -495,48 +626,76 @@ def _render_segment_price_discount_tab(conn, brand, segment_name, marketplace, s
         st.plotly_chart(fig_disc, use_container_width=True)
 
 
-def _render_brand_share_tab(conn, brand, category_name, marketplace, target_date):
-    if not category_name:
-        st.info("请选择类目名称以查看市场份额数据。")
+def _render_brand_share_tab(conn, brand, category_name, marketplace, start_str, end_str):
+    target_date = end_str
+    if not category_name and not brand:
+        st.info("请选择类目名称，或先指定品牌以查看跨类目市场份额。")
         return
 
-    share_df = get_brand_market_share(
-        conn, category_name=category_name, marketplace=marketplace,
-        target_date=target_date,
-    )
+    share_df = pd.DataFrame()
+    if category_name:
+        share_df = _cached_brand_market_share(
+            conn, category_name=category_name, marketplace=marketplace,
+            target_date=target_date,
+        )
 
-    if share_df.empty:
+    if category_name and share_df.empty:
         st.info("暂无市场份额数据。请先运行 build_brand_market_share ETL 任务。")
         return
 
     col1, col2 = st.columns(2)
 
     with col1:
-        top_n = 10
-        if len(share_df) > top_n:
-            top = share_df.nlargest(top_n - 1, "sales_share_pct")
-            others_pct = share_df[~share_df["brand"].isin(top["brand"])]["sales_share_pct"].sum()
-            others = pd.DataFrame([{"brand": "其他", "sales_share_pct": others_pct}])
-            plot_df = pd.concat([top, others], ignore_index=True)
-        else:
-            plot_df = share_df.copy()
+        if category_name:
+            top_n = 10
+            if len(share_df) > top_n:
+                top = share_df.nlargest(top_n - 1, "sales_share_pct")
+                others_pct = share_df[~share_df["brand"].isin(top["brand"])]["sales_share_pct"].sum()
+                others = pd.DataFrame([{"brand": "其他", "sales_share_pct": others_pct}])
+                plot_df = pd.concat([top, others], ignore_index=True)
+            else:
+                plot_df = share_df.copy()
 
-        fig = px.pie(
-            plot_df, values="sales_share_pct", names="brand",
-            title=f"市场份额 - 类目 {category_name}",
-            color_discrete_sequence=px.colors.qualitative.Set2,
-        )
-        if brand:
-            mask = plot_df["brand"].str.lower().str.contains(brand.lower(), na=False)
-            if mask.any():
-                fig.update_traces(pull=[0.08 if m else 0 for m in mask])
-        fig.update_traces(textposition="inside", textinfo="label+percent")
-        st.plotly_chart(fig, use_container_width=True)
+            fig = px.pie(
+                plot_df, values="sales_share_pct", names="brand",
+                title=f"市场份额 - 类目 {category_name}",
+                color_discrete_sequence=px.colors.qualitative.Set2,
+            )
+            if brand:
+                mask = plot_df["brand"].str.lower().eq(brand.lower())
+                if mask.any():
+                    fig.update_traces(pull=[0.08 if m else 0 for m in mask])
+            fig.update_traces(textposition="inside", textinfo="label+percent")
+            st.plotly_chart(fig, use_container_width=True)
+        else:
+            category_trend_df = _cached_brand_category_share_trend(
+                conn, brand=brand or "", marketplace=marketplace, start_date=start_str, end_date=end_str
+            )
+            if category_trend_df.empty:
+                st.info("暂无该品牌的跨类目历史份额数据。")
+            else:
+                latest_date = category_trend_df["observed_date"].max()
+                latest_df = category_trend_df[category_trend_df["observed_date"] == latest_date].copy()
+                latest_df = latest_df.sort_values("sales_share_pct", ascending=False).head(10)
+                fig = px.bar(
+                    latest_df,
+                    x="sales_share_pct",
+                    y="category_name",
+                    orientation="h",
+                    title=f"{brand} 最新跨类目份额",
+                    labels={"sales_share_pct": "份额 (%)", "category_name": "类目"},
+                )
+                st.plotly_chart(fig, use_container_width=True)
 
     with col2:
         if brand:
-            trend_df = get_brand_market_share_trend(
-                conn, brand=brand, category_name=category_name, marketplace=marketplace,
+            trend_df = _cached_brand_market_share_trend(
+                conn,
+                brand=brand,
+                category_name=category_name,
+                marketplace=marketplace,
+                start_date=start_str,
+                end_date=end_str,
             )
             if not trend_df.empty:
                 fig_trend = go.Figure()
@@ -553,31 +712,65 @@ def _render_brand_share_tab(conn, brand, category_name, marketplace, target_date
                 )
                 st.plotly_chart(fig_trend, use_container_width=True)
             else:
-                st.info(f"暂无 {brand} 的份额趋势数据")
+                st.info(f"当前筛选条件下暂无 {brand} 的份额趋势数据")
         else:
             st.info("输入品牌名以查看份额趋势")
 
-    with st.expander("查看完整品牌数据"):
-        display_cols = [c for c in [
-            "brand", "distinct_asins", "total_estimated_daily_sales",
-            "total_num_ratings", "avg_price", "avg_star_rating",
-            "sales_share_pct", "rating_share_pct",
-        ] if c in share_df.columns]
-        st.dataframe(
-            share_df[display_cols].sort_values("sales_share_pct", ascending=False).reset_index(drop=True),
-            use_container_width=True,
+    if brand:
+        category_trend_df = _cached_brand_category_share_trend(
+            conn, brand=brand, marketplace=marketplace, start_date=start_str, end_date=end_str
         )
+        if not category_trend_df.empty:
+            pivot_df = (
+                category_trend_df.pivot_table(
+                    index="observed_date",
+                    columns="category_name",
+                    values="sales_share_pct",
+                    aggfunc="mean",
+                )
+                .fillna(0)
+                .sort_index()
+            )
+            if not pivot_df.empty:
+                fig_cat = go.Figure()
+                for col in pivot_df.columns[:8]:
+                    fig_cat.add_trace(go.Scatter(
+                        x=pivot_df.index,
+                        y=pivot_df[col],
+                        mode="lines+markers",
+                        name=str(col),
+                    ))
+                fig_cat.update_layout(
+                    title=f"{brand} 跨类目份额历史",
+                    xaxis_title="日期",
+                    yaxis_title="份额 (%)",
+                    hovermode="x unified",
+                )
+                st.plotly_chart(fig_cat, use_container_width=True)
+
+    if category_name and not share_df.empty:
+        with st.expander("查看完整品牌数据"):
+            display_cols = [c for c in [
+                "brand", "distinct_asins", "total_estimated_daily_sales",
+                "total_num_ratings", "avg_price", "avg_star_rating",
+                "sales_share_pct", "rating_share_pct",
+            ] if c in share_df.columns]
+            st.dataframe(
+                share_df[display_cols].sort_values("sales_share_pct", ascending=False).reset_index(drop=True),
+                use_container_width=True,
+            )
 
 
-def _render_segment_share_tab(conn, brand, segment_name, marketplace, target_date):
+def _render_segment_share_tab(conn, brand, segment_name, marketplace, start_str, end_str):
+    target_date = end_str
     if not segment_name:
         st.info("请选择细分市场名称以查看市场份额数据。")
         return
 
-    share_df = get_segment_market_share(
+    share_df = _cached_segment_market_share(
         conn, segment_name=segment_name, marketplace=marketplace, target_date=target_date,
     )
-    stats_df = get_segment_estimation_stats(
+    stats_df = _cached_segment_estimation_stats(
         conn, segment_name=segment_name, marketplace=marketplace, target_date=target_date,
     )
 
@@ -610,7 +803,7 @@ def _render_segment_share_tab(conn, brand, segment_name, marketplace, target_dat
             color_discrete_sequence=px.colors.qualitative.Set2,
         )
         if brand:
-            mask = plot_df["brand"].str.lower().str.contains(brand.lower(), na=False)
+            mask = plot_df["brand"].str.lower().eq(brand.lower())
             if mask.any():
                 fig.update_traces(pull=[0.08 if m else 0 for m in mask])
         fig.update_traces(textposition="inside", textinfo="label+percent")
@@ -618,8 +811,13 @@ def _render_segment_share_tab(conn, brand, segment_name, marketplace, target_dat
 
     with col2:
         if brand:
-            trend_df = get_segment_market_share_trend(
-                conn, brand=brand, segment_name=segment_name, marketplace=marketplace,
+            trend_df = _cached_segment_market_share_trend(
+                conn,
+                brand=brand,
+                segment_name=segment_name,
+                marketplace=marketplace,
+                start_date=start_str,
+                end_date=end_str,
             )
             if not trend_df.empty:
                 fig_trend = go.Figure()
@@ -650,7 +848,7 @@ def _render_segment_share_tab(conn, brand, segment_name, marketplace, target_dat
 
 
 def _render_alerts_tab(conn, brand, marketplace, start_str):
-    alerts_df = get_trend_alerts(conn, brand=brand, marketplace=marketplace, start_date=start_str)
+    alerts_df = _cached_trend_alerts(conn, brand=brand, marketplace=marketplace, start_date=start_str)
 
     if alerts_df.empty:
         st.success("当前无趋势预警。")

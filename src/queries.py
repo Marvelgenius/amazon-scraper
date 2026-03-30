@@ -10,6 +10,20 @@ from typing import Any, Dict, List, Optional
 import pandas as pd
 import pymysql
 
+from .task_config import build_brand_candidates
+
+
+def _apply_brand_filter(sql: str, params: List[Any], column: str, brand: Optional[str], brand_aliases: Optional[List[str]] = None):
+    if not brand:
+        return sql, params
+    candidates = [item.lower() for item in build_brand_candidates(brand, brand_aliases)]
+    if not candidates:
+        candidates = [brand.lower()]
+    placeholders = ", ".join(["%s"] * len(candidates))
+    sql += f" AND LOWER(COALESCE({column},'')) IN ({placeholders})"
+    params.extend(candidates)
+    return sql, params
+
 def get_generic_filter_options(
     connection: pymysql.Connection,
     brand: Optional[str] = None,
@@ -18,35 +32,27 @@ def get_generic_filter_options(
     """Return filter options for the generic dashboard."""
     where = "WHERE 1=1"
     params: List[Any] = []
-    if brand:
-        where += " AND LOWER(COALESCE(brand,'')) LIKE %s"
-        params.append(f"%{brand.lower()}%")
+    where, params = _apply_brand_filter(where, params, "brand", brand)
     if category_name:
         where += " AND LOWER(COALESCE(category_name,'')) = %s"
         params.append(category_name.lower())
 
     dates_df = pd.read_sql(
-        f"SELECT DISTINCT observed_date FROM gurysk_app.v_product_daily_metrics {where} "
-        f"ORDER BY observed_date",
+        f"SELECT DISTINCT observed_date FROM gurysk_app.v_product_daily_metrics {where} ORDER BY observed_date",
         connection, params=params or None,
     )
     asin_df = pd.read_sql(
-        f"SELECT DISTINCT marketplace, asin, brand, product_title "
-        f"FROM gurysk_app.v_product_daily_metrics {where} "
-        f"ORDER BY marketplace, brand, asin",
+        f"SELECT DISTINCT marketplace, asin, brand, product_title FROM gurysk_app.v_product_daily_metrics {where} ORDER BY marketplace, brand, asin",
         connection, params=params or None,
     )
 
     brands_df = pd.read_sql(
-        "SELECT DISTINCT brand FROM gurysk_app.v_product_daily_metrics "
-        "WHERE brand IS NOT NULL ORDER BY brand",
+        "SELECT DISTINCT brand FROM gurysk_app.v_product_daily_metrics WHERE brand IS NOT NULL ORDER BY brand",
         connection,
     )
     categories_df = pd.read_sql(
-        f"SELECT DISTINCT category_name FROM gurysk_app.v_product_daily_metrics {where} "
-        "AND category_name IS NOT NULL ORDER BY category_name",
-        connection,
-        params=params or None,
+        f"SELECT DISTINCT category_name FROM gurysk_app.v_product_daily_metrics {where} AND category_name IS NOT NULL ORDER BY category_name",
+        connection, params=params or None,
     )
 
     mp_asin_map: Dict[str, List[Dict[str, str]]] = defaultdict(list)
@@ -73,32 +79,25 @@ def get_segment_filter_options(
 ) -> Dict[str, Any]:
     where = "WHERE 1=1"
     params: List[Any] = []
-    if brand:
-        where += " AND LOWER(COALESCE(brand,'')) LIKE %s"
-        params.append(f"%{brand.lower()}%")
+    where, params = _apply_brand_filter(where, params, "brand", brand)
     if segment_name:
         where += " AND LOWER(COALESCE(segment_name,'')) = %s"
         params.append(segment_name.lower())
 
     dates_df = pd.read_sql(
-        f"SELECT DISTINCT observed_date FROM gurysk_app.v_segment_product_daily_metrics {where} "
-        f"ORDER BY observed_date",
+        f"SELECT DISTINCT observed_date FROM gurysk_app.v_segment_product_daily_metrics {where} ORDER BY observed_date",
         connection, params=params or None,
     )
     asin_df = pd.read_sql(
-        f"SELECT DISTINCT marketplace, asin, brand, product_title "
-        f"FROM gurysk_app.v_segment_product_daily_metrics {where} "
-        f"ORDER BY marketplace, brand, asin",
+        f"SELECT DISTINCT marketplace, asin, brand, product_title FROM gurysk_app.v_segment_product_daily_metrics {where} ORDER BY marketplace, brand, asin",
         connection, params=params or None,
     )
     brands_df = pd.read_sql(
-        "SELECT DISTINCT brand FROM gurysk_app.v_segment_product_daily_metrics "
-        "WHERE brand IS NOT NULL ORDER BY brand",
+        "SELECT DISTINCT brand FROM gurysk_app.v_segment_product_daily_metrics WHERE brand IS NOT NULL ORDER BY brand",
         connection,
     )
     segments_df = pd.read_sql(
-        f"SELECT DISTINCT segment_name FROM gurysk_app.v_segment_product_daily_metrics {where} "
-        "AND segment_name IS NOT NULL ORDER BY segment_name",
+        f"SELECT DISTINCT segment_name FROM gurysk_app.v_segment_product_daily_metrics {where} AND segment_name IS NOT NULL ORDER BY segment_name",
         connection, params=params or None,
     )
 
@@ -131,9 +130,7 @@ def get_product_daily_metrics(
     sql = "SELECT * FROM gurysk_app.v_product_daily_metrics WHERE 1=1"
     params: List[Any] = []
 
-    if brand:
-        sql += " AND LOWER(COALESCE(brand,'')) LIKE %s"
-        params.append(f"%{brand.lower()}%")
+    sql, params = _apply_brand_filter(sql, params, "brand", brand)
     if category_name:
         sql += " AND LOWER(COALESCE(category_name,'')) = %s"
         params.append(category_name.lower())
@@ -167,9 +164,7 @@ def get_daily_sales_estimates(
     sql = "SELECT * FROM gurysk_app.v_daily_sales_estimate WHERE 1=1"
     params: List[Any] = []
 
-    if brand:
-        sql += " AND LOWER(COALESCE(brand,'')) LIKE %s"
-        params.append(f"%{brand.lower()}%")
+    sql, params = _apply_brand_filter(sql, params, "brand", brand)
     if category_name:
         sql += " AND LOWER(COALESCE(category_name,'')) = %s"
         params.append(category_name.lower())
@@ -229,11 +224,9 @@ def get_brand_market_share_trend(
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
 ) -> pd.DataFrame:
-    sql = (
-        "SELECT * FROM gurysk_app.v_brand_market_share "
-        "WHERE LOWER(brand) LIKE %s"
-    )
-    params: List[Any] = [f"%{brand.lower()}%"]
+    sql = "SELECT * FROM gurysk_app.v_brand_market_share WHERE 1=1"
+    params: List[Any] = []
+    sql, params = _apply_brand_filter(sql, params, "brand", brand)
 
     if category_name:
         sql += " AND LOWER(COALESCE(category_name,'')) = %s"
@@ -262,9 +255,7 @@ def get_trend_alerts(
     sql = "SELECT * FROM gurysk_app.v_trend_alert WHERE 1=1"
     params: List[Any] = []
 
-    if brand:
-        sql += " AND LOWER(dimension_value) LIKE %s"
-        params.append(f"%{brand.lower()}%")
+    sql, params = _apply_brand_filter(sql, params, "dimension_value", brand)
     if marketplace:
         sql += " AND marketplace = %s"
         params.append(marketplace)
@@ -290,9 +281,7 @@ def get_segment_product_daily_metrics(
     sql = "SELECT * FROM gurysk_app.v_segment_product_daily_metrics WHERE 1=1"
     params: List[Any] = []
 
-    if brand:
-        sql += " AND LOWER(COALESCE(brand,'')) LIKE %s"
-        params.append(f"%{brand.lower()}%")
+    sql, params = _apply_brand_filter(sql, params, "brand", brand)
     if segment_name:
         sql += " AND LOWER(COALESCE(segment_name,'')) = %s"
         params.append(segment_name.lower())
@@ -352,9 +341,7 @@ def get_segment_daily_sales_estimates(
     """
     params: List[Any] = []
 
-    if brand:
-        sql += " AND LOWER(COALESCE(m.brand,'')) LIKE %s"
-        params.append(f"%{brand.lower()}%")
+    sql, params = _apply_brand_filter(sql, params, "m.brand", brand)
     if segment_name:
         sql += " AND LOWER(COALESCE(m.segment_name,'')) = %s"
         params.append(segment_name.lower())
@@ -413,11 +400,9 @@ def get_segment_market_share_trend(
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
 ) -> pd.DataFrame:
-    sql = (
-        "SELECT * FROM gurysk_app.v_segment_market_share "
-        "WHERE LOWER(brand) LIKE %s"
-    )
-    params: List[Any] = [f"%{brand.lower()}%"]
+    sql = "SELECT * FROM gurysk_app.v_segment_market_share WHERE 1=1"
+    params: List[Any] = []
+    sql, params = _apply_brand_filter(sql, params, "brand", brand)
 
     if segment_name:
         sql += " AND LOWER(COALESCE(segment_name,'')) = %s"
@@ -433,6 +418,29 @@ def get_segment_market_share_trend(
         params.append(end_date)
 
     sql += " ORDER BY observed_date"
+    return pd.read_sql(sql, connection, params=params or None)
+
+
+def get_brand_category_share_trend(
+    connection: pymysql.Connection,
+    brand: str,
+    marketplace: Optional[str] = None,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+) -> pd.DataFrame:
+    sql = "SELECT * FROM gurysk_app.v_brand_market_share WHERE 1=1"
+    params: List[Any] = []
+    sql, params = _apply_brand_filter(sql, params, "brand", brand)
+    if marketplace:
+        sql += " AND marketplace = %s"
+        params.append(marketplace)
+    if start_date:
+        sql += " AND observed_date >= %s"
+        params.append(start_date)
+    if end_date:
+        sql += " AND observed_date <= %s"
+        params.append(end_date)
+    sql += " ORDER BY observed_date, category_name"
     return pd.read_sql(sql, connection, params=params or None)
 
 

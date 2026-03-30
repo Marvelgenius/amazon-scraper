@@ -45,7 +45,13 @@ def fetch_secret(secret_name: str, region_name: str) -> Dict[str, Any]:
     return parsed
 
 
+_cached_credentials: Dict[str, Any] = {}
+
+
 def resolve_postgres_credentials() -> Dict[str, Any]:
+    if _cached_credentials:
+        return dict(_cached_credentials)
+
     base = get_postgres_settings()
     aws = get_aws_settings()
     secret_name = aws["secret_name"]
@@ -69,4 +75,5 @@ def resolve_postgres_credentials() -> Dict[str, Any]:
     )
     resolved["user"] = _coalesce_secret_value(secret, "username", "user") or resolved["user"]
     resolved["password"] = _coalesce_secret_value(secret, "password") or resolved["password"]
+    _cached_credentials.update(resolved)
     return resolved

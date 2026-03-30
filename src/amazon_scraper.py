@@ -139,7 +139,7 @@ class Amazon:
         skipped_missing_asin = 0
         missing_asin_keys: List[List[str]] = []
 
-        for record in records:
+        for index, record in enumerate(records, start=1):
             asin = _extract_asin(record)
             if not asin:
                 skipped_missing_asin += 1
@@ -147,6 +147,8 @@ class Amazon:
                     missing_asin_keys.append(sorted(record.keys())[:12])
                 continue
 
+            row_metadata = dict(base_metadata)
+            row_metadata.setdefault("result_rank", index)
             rows.append(
                 {
                     "asin": asin,
@@ -156,7 +158,7 @@ class Amazon:
                     "endpoint_name": source_endpoint,
                     "marketplace_country": country,
                     "search_query": search_query,
-                    "request_metadata": base_metadata,
+                    "request_metadata": row_metadata,
                     "request_id": request_id,
                     "request_fingerprint": request_fingerprint,
                     "ingest_date": created_at.date(),
@@ -288,6 +290,7 @@ class Amazon:
         key: Optional[str] = None,
         country: str = "US",
         page: int = 1,
+        request_metadata: Optional[Dict[str, Any]] = None,
         **filters: Any,
     ) -> List[Dict[str, Any]]:
         return Amazon.fetch_search_raw_rows(
@@ -296,6 +299,7 @@ class Amazon:
             country=country,
             page=page,
             request_metadata={
+                **(request_metadata or {}),
                 "segment_name": segment_name,
                 "segment_keyword": segment_keyword,
                 "segment_type": "custom",
@@ -315,6 +319,7 @@ class Amazon:
         table_name: str = DEFAULT_RAW_PRODUCTS_TABLE,
         create_table: bool = True,
         commit: bool = True,
+        request_metadata: Optional[Dict[str, Any]] = None,
         **filters: Any,
     ) -> List[Dict[str, Any]]:
         rows = Amazon.fetch_segment_raw_rows(
@@ -323,6 +328,7 @@ class Amazon:
             key=key,
             country=country,
             page=page,
+            request_metadata=request_metadata,
             **filters,
         )
         if rows:

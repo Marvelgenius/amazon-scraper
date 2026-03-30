@@ -37,9 +37,11 @@ from .postgres_pipeline import (
     build_core_inventory_snapshot as pg_build_core_inventory_snapshot,
     build_core_price_snapshot as pg_build_core_price_snapshot,
     build_core_review_fact as pg_build_core_review_fact,
+    build_mart_daily_sales_estimate as pg_build_mart_daily_sales_estimate,
     build_mart_brand_market_share as pg_build_mart_brand_market_share,
     build_mart_product_daily_metrics as pg_build_mart_product_daily_metrics,
     build_mart_segment_market_share as pg_build_mart_segment_market_share,
+    build_ops_trend_alerts as pg_build_ops_trend_alerts,
     build_staging_offer_snapshot as pg_build_staging_offer_snapshot,
     build_staging_product_snapshot as pg_build_staging_product_snapshot,
     build_staging_review_event as pg_build_staging_review_event,
@@ -405,8 +407,8 @@ def task_build_segment_product_daily_metrics(
 ) -> int:
     if _is_postgres_backend():
         return _run_postgres_job(
-            "build_core_inventory_snapshot",
-            pg_build_core_inventory_snapshot,
+            "build_mart_product_daily_metrics",
+            pg_build_mart_product_daily_metrics,
             **kwargs,
         )
     connection = create_db_connection()
@@ -426,8 +428,8 @@ def task_build_daily_sales_estimates(
 ) -> int:
     if _is_postgres_backend():
         return _run_postgres_job(
-            "build_core_price_snapshot",
-            pg_build_core_price_snapshot,
+            "build_mart_daily_sales_estimate",
+            pg_build_mart_daily_sales_estimate,
             **kwargs,
         )
     connection = create_db_connection()
@@ -496,8 +498,12 @@ def task_detect_trend_alerts(
 ) -> int:
     if _is_postgres_backend():
         return _run_postgres_job(
-            "run_postgres_pipeline",
-            lambda connection: sum(run_postgres_pipeline(connection).values()),
+            "build_ops_trend_alerts",
+            lambda connection: pg_build_ops_trend_alerts(
+                connection,
+                lookback_days=lookback_days,
+                z_threshold=z_threshold,
+            ),
             **kwargs,
         )
     connection = create_db_connection()
@@ -543,8 +549,10 @@ def task_build_postgres_marts(**kwargs: Any) -> Dict[str, int]:
         "build_postgres_marts",
         lambda connection: {
             "product_daily_metrics": pg_build_mart_product_daily_metrics(connection),
+            "daily_sales_estimate": pg_build_mart_daily_sales_estimate(connection),
             "brand_market_share": pg_build_mart_brand_market_share(connection),
             "segment_market_share": pg_build_mart_segment_market_share(connection),
+            "trend_alert": pg_build_ops_trend_alerts(connection),
         },
         **kwargs,
     )

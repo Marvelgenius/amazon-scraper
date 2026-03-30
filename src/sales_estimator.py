@@ -7,7 +7,7 @@ with Laplace approximation for confidence intervals.
 """
 
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
 import numpy as np
@@ -17,6 +17,7 @@ from scipy.misc import derivative
 from scipy.optimize import minimize_scalar
 
 logger = logging.getLogger(__name__)
+MAX_REASONABLE_DAILY_SALES = 1_000_000
 
 
 @dataclass
@@ -89,7 +90,7 @@ class BayesianDailySalesEstimator:
         # --- Prior ---
         if prior_daily_sales and prior_daily_sales > 0:
             mu_prior = np.log(prior_daily_sales)
-            sigma_prior = 0.5
+            sigma_prior = 0.35
         elif sales_volume_num and sales_volume_num > 0:
             mu_prior = np.log(max(sales_volume_num / 30.0, 0.5))
             sigma_prior = 0.8
@@ -132,11 +133,14 @@ class BayesianDailySalesEstimator:
         map_sales = np.exp(map_log_s)
 
         hessian = derivative(neg_log_posterior, map_log_s, n=2, dx=0.01)
-        posterior_sigma = 1.0 / np.sqrt(max(hessian, 0.01))
+        posterior_sigma = min(1.0 / np.sqrt(max(hessian, 0.01)), 2.0)
 
         lower = np.exp(map_log_s - 1.96 * posterior_sigma)
         upper = np.exp(map_log_s + 1.96 * posterior_sigma)
         confidence = 1.0 / (1.0 + posterior_sigma)
+        map_sales = min(map_sales, MAX_REASONABLE_DAILY_SALES)
+        lower = min(lower, MAX_REASONABLE_DAILY_SALES)
+        upper = min(upper, MAX_REASONABLE_DAILY_SALES)
 
         return SalesEstimate(
             estimated_daily_sales=max(int(round(map_sales)), 0),
@@ -144,6 +148,48 @@ class BayesianDailySalesEstimator:
             estimate_upper_bound=max(int(round(upper)), 0),
             confidence_score=round(min(confidence, 1.0), 2),
         )
+
+
+def calibrate_review_rate_params(df: pd.DataFrame) -> Dict[str, float]:
+    """
+    Estimate a Beta prior for the review conversion rate from historical rows.
+
+    Uses sales_volume_num / 30 as a coarse daily-sales anchor and observes how
+    num_ratings_delta behaves relative to that anchor.
+    """
+    required_cols = {"num_ratings_delta", "sales_volume_num"}
+    if not required_cols.issubset(df.columns):
+        return {
+            "review_rate_alpha": DEFAULT_CATEGORY_PARAMS.review_rate_alpha,
+            "review_rate_beta": DEFAULT_CATEGORY_PARAMS.review_rate_beta,
+        }
+
+    sample = df.dropna(subset=["num_ratings_delta", "sales_volume_num"]).copy()
+    sample = sample[
+        (sample["num_ratings_delta"] >= 0)
+        & (sample["sales_volume_num"] > 0)
+    ]
+
+    if len(sample) < 5:
+        logger.warning(
+            "calibrate_review_rate_params: insufficient data (%d rows), using defaults.",
+            len(sample),
+        )
+        return {
+            "review_rate_alpha": DEFAULT_CATEGORY_PARAMS.review_rate_alpha,
+            "review_rate_beta": DEFAULT_CATEGORY_PARAMS.review_rate_beta,
+        }
+
+    daily_anchor = sample["sales_volume_num"].astype(float) / 30.0
+    rates = (sample["num_ratings_delta"].astype(float) / daily_anchor.clip(lower=1.0)).clip(0.0005, 0.25)
+    mean_rate = float(rates.mean())
+    concentration = float(min(max(len(rates) * 6.0, 20.0), 400.0))
+    alpha = max(mean_rate * concentration, 0.5)
+    beta = max((1.0 - mean_rate) * concentration, 1.0)
+    return {
+        "review_rate_alpha": alpha,
+        "review_rate_beta": beta,
+    }
 
 
 def calibrate_bsr_params(df: pd.DataFrame) -> Dict[str, float]:
@@ -172,10 +218,67 @@ def calibrate_bsr_params(df: pd.DataFrame) -> Dict[str, float]:
     residuals = ln_bsr - model.predict(ln_sales.reshape(-1, 1))
 
     return {
-        "bsr_gamma": float(-model.coef_[0]),
-        "bsr_delta": float(model.intercept_),
-        "bsr_sigma": float(np.std(residuals)),
+        "bsr_gamma": float(np.clip(-model.coef_[0], 0.1, 2.5)),
+        "bsr_delta": float(np.clip(model.intercept_, 2.0, 20.0)),
+        "bsr_sigma": float(np.clip(np.std(residuals), 0.15, 3.0)),
     }
+
+
+def _has_review_calibration_data(df: pd.DataFrame) -> bool:
+    if not {"num_ratings_delta", "sales_volume_num"}.issubset(df.columns):
+        return False
+    sample = df.dropna(subset=["num_ratings_delta", "sales_volume_num"])
+    sample = sample[(sample["num_ratings_delta"] >= 0) & (sample["sales_volume_num"] > 0)]
+    return len(sample) >= 5
+
+
+def _has_bsr_calibration_data(df: pd.DataFrame) -> bool:
+    if not {"bsr_rank", "sales_volume_num"}.issubset(df.columns):
+        return False
+    sample = df.dropna(subset=["bsr_rank", "sales_volume_num"])
+    sample = sample[(sample["bsr_rank"] > 0) & (sample["sales_volume_num"] > 0)]
+    return len(sample) >= 5
+
+
+def build_calibrated_category_params(
+    df: pd.DataFrame,
+    category_hint: Optional[str] = None,
+    fallback: Optional[CategoryParams] = None,
+) -> CategoryParams:
+    """
+    Blend default category priors with lightweight online calibration.
+    """
+    base = get_category_params(category_hint)
+    review_base_alpha = fallback.review_rate_alpha if fallback else base.review_rate_alpha
+    review_base_beta = fallback.review_rate_beta if fallback else base.review_rate_beta
+    bsr_base_gamma = fallback.bsr_gamma if fallback else base.bsr_gamma
+    bsr_base_delta = fallback.bsr_delta if fallback else base.bsr_delta
+    bsr_base_sigma = fallback.bsr_sigma if fallback else base.bsr_sigma
+
+    if _has_review_calibration_data(df):
+        review_fit = calibrate_review_rate_params(df)
+    else:
+        review_fit = {
+            "review_rate_alpha": review_base_alpha,
+            "review_rate_beta": review_base_beta,
+        }
+
+    if _has_bsr_calibration_data(df):
+        bsr_fit = calibrate_bsr_params(df)
+    else:
+        bsr_fit = {
+            "bsr_gamma": bsr_base_gamma,
+            "bsr_delta": bsr_base_delta,
+            "bsr_sigma": bsr_base_sigma,
+        }
+
+    return CategoryParams(
+        review_rate_alpha=float(review_fit.get("review_rate_alpha", review_base_alpha)),
+        review_rate_beta=float(review_fit.get("review_rate_beta", review_base_beta)),
+        bsr_gamma=float(bsr_fit.get("bsr_gamma", bsr_base_gamma)),
+        bsr_delta=float(bsr_fit.get("bsr_delta", bsr_base_delta)),
+        bsr_sigma=max(float(bsr_fit.get("bsr_sigma", bsr_base_sigma)), 0.15),
+    )
 
 
 def estimate_daily_sales_batch(

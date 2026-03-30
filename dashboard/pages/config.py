@@ -160,42 +160,51 @@ def _parse_config_value(raw_value):
         return raw_value
 
 
+def _split_csv(raw: str):
+    return [item.strip() for item in (raw or "").split(",") if item.strip()]
+
+
 def _inject_styles() -> None:
     st.markdown(
         """
         <style>
+        .stApp {
+            background: linear-gradient(180deg, #f8fafc 0%, #eef2ff 100%);
+        }
         .cfg-banner {
-            padding: 1rem 1.1rem;
-            border: 1px solid rgba(120,120,120,0.22);
-            border-radius: 16px;
-            background: linear-gradient(180deg, rgba(245,247,250,0.96), rgba(236,240,244,0.94));
-            margin-bottom: 0.8rem;
+            padding: 1.1rem 1.2rem;
+            border: 1px solid rgba(120,120,120,0.16);
+            border-radius: 22px;
+            background: linear-gradient(135deg, rgba(255,255,255,0.9), rgba(238,242,255,0.92));
+            box-shadow: 0 20px 45px rgba(15,23,42,0.06);
+            margin-bottom: 1rem;
         }
         .cfg-banner h3 {
             margin: 0 0 0.35rem 0;
-            font-size: 1.1rem;
-            color: #1f2937;
+            font-size: 1.2rem;
+            color: #0f172a;
         }
         .cfg-banner p {
             margin: 0;
-            color: #4b5563;
+            color: #475569;
             line-height: 1.45;
         }
         .cfg-card {
-            border: 1px solid rgba(120,120,120,0.22);
-            border-radius: 14px;
-            padding: 0.9rem 1rem;
+            border: 1px solid rgba(120,120,120,0.16);
+            border-radius: 18px;
+            padding: 1rem 1rem;
             margin: 0.45rem 0 0.75rem 0;
-            background: rgba(245,247,250,0.94);
+            background: rgba(255,255,255,0.82);
+            box-shadow: 0 16px 35px rgba(15,23,42,0.05);
         }
         .cfg-title {
-            font-weight: 600;
-            font-size: 1rem;
+            font-weight: 700;
+            font-size: 1.02rem;
             margin-bottom: 0.15rem;
-            color: #111827;
+            color: #0f172a;
         }
         .cfg-subtle {
-            color: #4b5563;
+            color: #475569;
             font-size: 0.9rem;
         }
         .cfg-chip-row {
@@ -206,12 +215,12 @@ def _inject_styles() -> None:
         }
         .cfg-chip {
             display: inline-block;
-            padding: 0.2rem 0.55rem;
+            padding: 0.28rem 0.65rem;
             border-radius: 999px;
-            font-size: 0.78rem;
-            border: 1px solid rgba(120,120,120,0.24);
-            background: rgba(255,255,255,0.82);
-            color: #374151;
+            font-size: 0.79rem;
+            border: 1px solid rgba(120,120,120,0.18);
+            background: rgba(248,250,252,0.96);
+            color: #334155;
         }
         .cfg-chip-ok {
             color: #166534;
@@ -224,16 +233,28 @@ def _inject_styles() -> None:
             background: rgba(254,243,199,0.85);
         }
         .cfg-form-note {
-            border: 1px dashed rgba(120,120,120,0.28);
-            border-radius: 12px;
-            padding: 0.75rem 0.9rem;
-            background: rgba(248,250,252,0.95);
-            color: #374151;
+            border: 1px dashed rgba(120,120,120,0.22);
+            border-radius: 16px;
+            padding: 0.85rem 1rem;
+            background: rgba(255,255,255,0.86);
+            color: #334155;
             margin: 0.25rem 0 0.75rem 0;
             line-height: 1.5;
         }
         .cfg-form-note strong {
-            color: #111827;
+            color: #0f172a;
+        }
+        .cfg-meta-list {
+            margin-top: 0.55rem;
+            color: #475569;
+            font-size: 0.85rem;
+        }
+        .stButton > button, .stForm button[kind="primary"] {
+            border-radius: 999px;
+            border: 1px solid rgba(79,70,229,0.16);
+            background: linear-gradient(180deg, #4338ca, #4f46e5);
+            color: white;
+            font-weight: 600;
         }
         </style>
         """,
@@ -316,9 +337,21 @@ def _render_filters(df: pd.DataFrame) -> pd.DataFrame:
     return filtered
 
 
-def _build_config_value(new_type: str, raw_value: str, category_name: str, segment_name: str):
+def _build_config_value(
+    new_type: str,
+    raw_value: str,
+    category_name: str,
+    segment_name: str,
+    target_brand: str,
+    brand_aliases: str,
+    query_variants: str,
+    related_terms: str,
+    repeat_k: int,
+    top_n: int,
+    sampling_budget: int,
+):
     config_value = raw_value.strip() or None
-    if new_type not in {"category_scan", "segment_scan"}:
+    if new_type not in {"category_scan", "segment_scan", "brand_search", "product_query"}:
         return config_value
 
     payload = {}
@@ -334,6 +367,24 @@ def _build_config_value(new_type: str, raw_value: str, category_name: str, segme
         payload["category_name"] = category_name.strip()
     if new_type == "segment_scan" and segment_name.strip():
         payload["segment_name"] = segment_name.strip()
+    if target_brand.strip():
+        payload["target_brand"] = target_brand.strip()
+    alias_values = _split_csv(brand_aliases)
+    if alias_values:
+        payload["brand_aliases"] = alias_values
+    if new_type == "segment_scan":
+        payload["enable_query_perturbation"] = True
+        payload["repeat_k"] = int(repeat_k)
+        if top_n > 0:
+            payload["top_n"] = int(top_n)
+        if sampling_budget > 0:
+            payload["sampling_budget"] = int(sampling_budget)
+        query_variant_values = _split_csv(query_variants)
+        if query_variant_values:
+            payload["query_variants"] = query_variant_values
+        related_term_values = _split_csv(related_terms)
+        if related_term_values:
+            payload["related_terms"] = related_term_values
 
     return json.dumps(payload, ensure_ascii=False) if payload else None
 
@@ -389,10 +440,10 @@ def _render_add_form(conn):
         <div class="cfg-form-note">
             <strong>填写说明</strong><br/>
             1. <strong>{meta['key_label']}</strong>：这条任务的主键值，决定采集什么。<br/>
-            2. <strong>附加参数 JSON</strong>：仅在需要补充过滤条件或扩展参数时填写。<br/>
-            3. <strong>调度频率 / 适用市场 / 搜索页数</strong>：决定采集何时运行、在哪些站点运行、抓多少页。<br/>
-            4. <strong>说明</strong>：建议写清用途，方便后续维护。<br/>
-            5. <strong>操作者 ID</strong>：用于记录是谁创建或修改了这条配置。
+            2. <strong>目标品牌 / 品牌别名</strong>：用于精确识别品牌，不再依赖标题里的普通词。<br/>
+            3. <strong>附加参数 JSON</strong>：仅在需要补充过滤条件或扩展参数时填写。<br/>
+            4. <strong>segment 扰动采样</strong>：可配置 query 变体、重复轮次、Top N 和预算。<br/>
+            5. <strong>调度频率 / 适用市场 / 搜索页数</strong>：决定采集何时运行、在哪些站点运行、抓多少页。
         </div>
         """,
         unsafe_allow_html=True,
@@ -459,6 +510,60 @@ def _render_add_form(conn):
                 help="仅 segment_scan 需要。用于给自定义关键词市场池命名，后续首页会直接显示这个名称。",
             )
 
+        brand_col1, brand_col2 = st.columns(2)
+        with brand_col1:
+            target_brand = st.text_input(
+                "目标品牌（可选）",
+                placeholder="例: OutIn",
+                help="用于精确锁定要重点补类目和跟踪份额的品牌。品牌识别会优先依赖 API 返回的 brand 字段。",
+            )
+        with brand_col2:
+            brand_aliases = st.text_input(
+                "品牌别名（逗号分隔，可选）",
+                placeholder="例: OUTIN, Out In",
+                help="用于补充品牌别名清单，后续展示和补采都会按精确品牌名 + 别名集合处理。",
+            )
+
+        sampling_col1, sampling_col2 = st.columns(2)
+        with sampling_col1:
+            query_variants = st.text_input(
+                "Query 变体（仅 segment_scan，可选）",
+                placeholder="例: travel coffee maker, compact espresso machine",
+                disabled=new_type != "segment_scan",
+                help="为细分市场手动补充更多搜索词变体。系统也会自动扩展相关词。",
+            )
+            related_terms = st.text_input(
+                "相关词补充（仅 segment_scan，可选）",
+                placeholder="例: espresso, travel",
+                disabled=new_type != "segment_scan",
+                help="用于自动扩展 query 时追加相关词，帮助更接近真实搜索空间。",
+            )
+        with sampling_col2:
+            repeat_k = st.number_input(
+                "重复轮次 K（仅 segment_scan）",
+                min_value=1,
+                max_value=10,
+                value=2 if new_type == "segment_scan" else 1,
+                disabled=new_type != "segment_scan",
+                help="同一 query 重复抓取的轮次，用于减弱排序波动带来的样本偏差。",
+            )
+            top_n = st.number_input(
+                "Top N（仅 segment_scan）",
+                min_value=0,
+                max_value=200,
+                value=50 if new_type == "segment_scan" else 0,
+                disabled=new_type != "segment_scan",
+                help="近似控制每个 query 抓取的结果深度，系统会按页数换算请求数量。",
+            )
+            sampling_budget = st.number_input(
+                "采样预算上限（仅 segment_scan）",
+                min_value=0,
+                max_value=200,
+                value=0,
+                disabled=new_type != "segment_scan",
+                help="限制单条 segment_scan 的最大请求数。0 表示按变体、轮次和页数自然展开。",
+            )
+
         submitted = st.form_submit_button("添加配置", type="primary", use_container_width=True)
         if submitted:
             if not new_key.strip():
@@ -466,7 +571,19 @@ def _render_add_form(conn):
                 return
 
             try:
-                config_value = _build_config_value(new_type, new_value, category_name, segment_name)
+                config_value = _build_config_value(
+                    new_type,
+                    new_value,
+                    category_name,
+                    segment_name,
+                    target_brand,
+                    brand_aliases,
+                    query_variants,
+                    related_terms,
+                    int(repeat_k),
+                    int(top_n),
+                    int(sampling_budget),
+                )
             except ValueError as exc:
                 st.error(str(exc))
                 return
@@ -524,6 +641,11 @@ def _render_config_table(conn, subset: pd.DataFrame, config_type: str):
                     <span class="cfg-chip">市场 {_safe_text(row.get('countries'))}</span>
                     <span class="cfg-chip">页数 {int(row.get('pages') or 0)}</span>
                     {_status_chip(bool(row.get('is_active')))}
+                </div>
+                <div class="cfg-meta-list">
+                    {f"目标品牌：{_safe_text(parsed_value.get('target_brand'))}<br/>" if isinstance(parsed_value, dict) and parsed_value.get('target_brand') else ""}
+                    {f"品牌别名：{', '.join(parsed_value.get('brand_aliases', []))}<br/>" if isinstance(parsed_value, dict) and parsed_value.get('brand_aliases') else ""}
+                    {f"采样：K={parsed_value.get('repeat_k', 1)} / TopN={parsed_value.get('top_n', '—')} / 预算={parsed_value.get('sampling_budget', '—')}<br/>" if config_type == "segment_scan" and isinstance(parsed_value, dict) else ""}
                 </div>
             </div>
             """,
