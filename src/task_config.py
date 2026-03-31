@@ -1,15 +1,7 @@
 import math
 from typing import Any, Dict, List, Optional, Sequence
 
-
-_KNOWN_BRAND_ALIASES = {
-    "delonghi": "De'Longhi",
-    "de longhi": "De'Longhi",
-    "de'longhi": "De'Longhi",
-    "nescafe": "NESCAFÉ",
-    "nescaf\u00e9": "NESCAFÉ",
-    "black+decker": "BLACK+DECKER",
-}
+from .brand_utils import canonicalize_brand_name
 
 _SEGMENT_TERM_EXPANSIONS = {
     "portable": ["travel", "compact", "mini"],
@@ -21,18 +13,6 @@ _SEGMENT_TERM_EXPANSIONS = {
     "espresso machine": ["espresso maker", "coffee machine", "portable espresso maker"],
     "espresso maker": ["espresso machine", "coffee maker"],
 }
-
-
-def canonicalize_brand_name(brand: Optional[str]) -> Optional[str]:
-    if brand is None:
-        return None
-    cleaned = " ".join(str(brand).strip().split())
-    if not cleaned:
-        return None
-    lowered = cleaned.lower()
-    return _KNOWN_BRAND_ALIASES.get(lowered, cleaned)
-
-
 def parse_brand_aliases(raw_aliases: Any) -> List[str]:
     if raw_aliases is None:
         return []

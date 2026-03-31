@@ -8,6 +8,7 @@ Run with: streamlit run dashboard/app.py
 
 import os
 import sys
+import importlib
 from datetime import datetime
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -20,7 +21,9 @@ from plotly.subplots import make_subplots
 
 from src.database import create_db_connection
 from src.db_compat import ping_connection
-from src import queries as _q
+from src import queries as _queries_module
+
+_q = importlib.reload(_queries_module)
 
 CACHE_TTL = 300  # 5 minutes
 

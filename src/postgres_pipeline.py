@@ -1,7 +1,7 @@
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Sequence
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 import pandas as pd
 from psycopg2.extras import Json
@@ -14,12 +14,18 @@ from .aws_storage import (
     build_s3_key,
     put_json_to_s3,
 )
-from .debug_runtime import debug_log
+from .brand_utils import (
+    clean_brand_name,
+    extract_authoritative_brand_from_payload,
+    extract_brand_from_payload,
+    normalize_title_key,
+)
 from .etl import _bootstrap_scaled_total_sales, _compute_jaccard_similarity, parse_sales_volume
 from .postgres_database import bulk_insert_raw_events, execute_sql_file
 from .sales_estimator import build_calibrated_category_params, estimate_daily_sales_batch
 
 SQL_DIR = Path(__file__).resolve().parent.parent / "sql" / "postgres"
+
 SQL_FILES = [
     "001_init_schemas.sql",
     "010_raw.sql",
@@ -207,25 +213,6 @@ def store_raw_api_events(connection, rows: Iterable[Dict[str, Any]]) -> int:
     inserted = bulk_insert_raw_events(connection, normalized_rows)
     _upsert_api_request_logs(connection, normalized_rows)
     _write_dead_letters(connection, dead_letters)
-    # region agent log
-    debug_log(
-        hypothesis_id="H4",
-        location="src/postgres_pipeline.py:store_raw_api_events",
-        message="Raw event storage summary",
-        data={
-            "normalized_rows": len(normalized_rows),
-            "dead_letters": len(dead_letters),
-            "inserted": inserted,
-            "sample_endpoint": normalized_rows[0]["endpoint_name"] if normalized_rows else None,
-            "sample_marketplace": normalized_rows[0]["marketplace_country"] if normalized_rows else None,
-            "sample_payload_keys": (
-                sorted(normalized_rows[0]["response_body_jsonb"].keys())[:12]
-                if normalized_rows and isinstance(normalized_rows[0].get("response_body_jsonb"), dict)
-                else []
-            ),
-        },
-    )
-    # endregion
     return inserted
 
 
@@ -337,6 +324,24 @@ def _upsert_dataframe(
         execute_values(cursor, sql, values, page_size=200)
     connection.commit()
     return len(values)
+
+
+def _delete_dataframe_scopes(
+    connection,
+    table: str,
+    scope_columns: Sequence[str],
+    df: pd.DataFrame,
+) -> int:
+    if df.empty:
+        return 0
+
+    scope_rows = _normalize_frame_for_upsert(df.drop_duplicates(subset=list(scope_columns)), scope_columns)
+    sql = f"DELETE FROM {table} WHERE " + " AND ".join(f"{column} = %s" for column in scope_columns)
+    with connection.cursor() as cursor:
+        cursor.executemany(sql, scope_rows)
+        deleted = max(cursor.rowcount, 0)
+    connection.commit()
+    return deleted
 
 
 def _load_metric_signal_frame(connection) -> pd.DataFrame:
@@ -505,23 +510,7 @@ def build_staging_product_snapshot(connection) -> int:
                     response_body_jsonb -> 'product_information' ->> 'Brand',
                     response_body_jsonb -> 'product_information' ->> 'brand',
                     response_body_jsonb ->> 'brand',
-                    NULLIF(
-                        REGEXP_REPLACE(
-                            split_part(
-                                COALESCE(
-                                    response_body_jsonb ->> 'product_byline',
-                                    response_body_jsonb ->> 'product_title',
-                                    ''
-                                ),
-                                ' ',
-                                1
-                            ),
-                            '(^[[:punct:]]+|[[:punct:]]+$)',
-                            '',
-                            'g'
-                        ),
-                        ''
-                    )
+                    response_body_jsonb ->> 'brand_name'
                 ),
                 ''
             ),
@@ -607,7 +596,371 @@ def build_staging_product_snapshot(connection) -> int:
     return _execute_insert(connection, sql)
 
 
-def backfill_staging_product_enrichment(connection) -> int:
+def _build_staging_scope_sql(
+    segment_name: Optional[str] = None,
+    start_date: Optional[Any] = None,
+    end_date: Optional[Any] = None,
+    marketplace_code: Optional[str] = None,
+    table_alias: str = "s",
+) -> tuple[str, List[Any]]:
+    clauses: List[str] = []
+    params: List[Any] = []
+    prefix = f"{table_alias}." if table_alias else ""
+    if segment_name:
+        clauses.append(f"{prefix}segment_name = %s")
+        params.append(segment_name)
+    if start_date:
+        clauses.append(f"{prefix}ingest_date >= %s")
+        params.append(start_date)
+    if end_date:
+        clauses.append(f"{prefix}ingest_date <= %s")
+        params.append(end_date)
+    if marketplace_code:
+        clauses.append(f"{prefix}marketplace_country = %s")
+        params.append(marketplace_code)
+    return (" AND ".join(clauses) if clauses else "TRUE"), params
+
+
+def build_brand_registry(connection, *, marketplace_code: Optional[str] = None) -> int:
+    where_clauses = [
+        "endpoint_name IN ('product_search', 'segment_search', 'products_by_category', 'product_details', 'best_sellers')",
+        "COALESCE(source_record_id, business_id) IS NOT NULL",
+    ]
+    params: List[Any] = []
+    if marketplace_code:
+        where_clauses.append("marketplace_country = %s")
+        params.append(marketplace_code)
+    select_sql = f"""
+        SELECT
+            source_system,
+            marketplace_country,
+            COALESCE(source_record_id, business_id) AS asin,
+            endpoint_name,
+            fetched_at,
+            response_body_jsonb
+        FROM raw.api_ingest_event
+        WHERE {' AND '.join(where_clauses)}
+    """
+    aggregated: Dict[Tuple[str, str, str, str, str], Dict[str, Any]] = {}
+    with connection.cursor() as cursor:
+        cursor.execute(select_sql, tuple(params))
+        for platform_code, market, asin, endpoint_name, fetched_at, payload in cursor.fetchall():
+            market = str(market or "").strip().upper()
+            if not market:
+                continue
+            brand, source_type = extract_authoritative_brand_from_payload(payload or {})
+            title_key = normalize_title_key((payload or {}).get("product_title") or (payload or {}).get("title"))
+            if not brand or not source_type or not title_key:
+                continue
+            registry_key = (platform_code, market, title_key, brand, source_type)
+            bucket = aggregated.setdefault(
+                registry_key,
+                {
+                    "platform_code": platform_code,
+                    "marketplace_code": market,
+                    "asin": asin,
+                    "normalized_title": title_key,
+                    "brand": brand,
+                    "source_type": source_type,
+                    "source_endpoint": endpoint_name,
+                    "first_observed_at": fetched_at,
+                    "last_observed_at": fetched_at,
+                    "observation_count": 0,
+                },
+            )
+            bucket["observation_count"] += 1
+            if fetched_at and fetched_at < bucket["first_observed_at"]:
+                bucket["first_observed_at"] = fetched_at
+            if fetched_at and fetched_at > bucket["last_observed_at"]:
+                bucket["last_observed_at"] = fetched_at
+            if asin:
+                bucket["asin"] = asin
+            if endpoint_name == "product_details":
+                bucket["source_endpoint"] = endpoint_name
+
+    delete_sql = "DELETE FROM core.dim_brand_registry"
+    delete_params: List[Any] = []
+    if marketplace_code:
+        delete_sql += " WHERE marketplace_code = %s"
+        delete_params.append(marketplace_code.upper())
+    with connection.cursor() as cursor:
+        cursor.execute(delete_sql, tuple(delete_params))
+
+    if not aggregated:
+        connection.commit()
+        return 0
+
+    rows = [
+        (
+            row["platform_code"],
+            row["marketplace_code"],
+            row["asin"],
+            row["normalized_title"],
+            row["brand"],
+            row["source_type"],
+            row["source_endpoint"],
+            row["first_observed_at"],
+            row["last_observed_at"],
+            row["observation_count"],
+        )
+        for row in aggregated.values()
+    ]
+    insert_sql = """
+        INSERT INTO core.dim_brand_registry (
+            platform_code,
+            marketplace_code,
+            asin,
+            normalized_title,
+            brand,
+            source_type,
+            source_endpoint,
+            first_observed_at,
+            last_observed_at,
+            observation_count
+        ) VALUES %s
+    """
+    with connection.cursor() as cursor:
+        execute_values(cursor, insert_sql, rows, page_size=200)
+    connection.commit()
+    return len(rows)
+
+
+def _load_manual_brand_overrides(connection) -> Dict[Tuple[str, str, str], str]:
+    sql = """
+        SELECT platform_code, marketplace_code, asin, brand
+        FROM ops.brand_manual_override
+        WHERE is_active = TRUE
+    """
+    overrides: Dict[Tuple[str, str, str], str] = {}
+    with connection.cursor() as cursor:
+        cursor.execute(sql)
+        for platform_code, marketplace, asin, brand in cursor.fetchall():
+            cleaned = clean_brand_name(brand)
+            if not cleaned:
+                continue
+            overrides[(str(platform_code or "amazon"), str(marketplace or "").upper(), str(asin or ""))] = cleaned
+    return overrides
+
+
+def upsert_brand_manual_override(
+    connection,
+    *,
+    asin: str,
+    brand: str,
+    marketplace_code: str,
+    note: Optional[str] = None,
+    platform_code: str = "amazon",
+) -> int:
+    cleaned_brand = clean_brand_name(brand)
+    if not cleaned_brand:
+        raise ValueError("brand override must be a non-empty brand name")
+    sql = """
+        INSERT INTO ops.brand_manual_override (
+            platform_code,
+            marketplace_code,
+            asin,
+            brand,
+            note,
+            is_active,
+            updated_at
+        ) VALUES (%s, %s, %s, %s, %s, TRUE, NOW())
+        ON CONFLICT (platform_code, marketplace_code, asin) DO UPDATE SET
+            brand = EXCLUDED.brand,
+            note = EXCLUDED.note,
+            is_active = TRUE,
+            updated_at = NOW()
+    """
+    with connection.cursor() as cursor:
+        cursor.execute(
+            sql,
+            (
+                platform_code,
+                marketplace_code.upper(),
+                asin,
+                cleaned_brand,
+                note,
+            ),
+        )
+    connection.commit()
+    return 1
+
+
+def _load_title_brand_library(connection) -> Dict[Tuple[str, str, str], str]:
+    sql = """
+        SELECT
+            platform_code,
+            marketplace_code,
+            normalized_title,
+            ARRAY_AGG(DISTINCT brand) AS brands
+        FROM core.dim_brand_registry
+        GROUP BY platform_code, marketplace_code, normalized_title
+        HAVING COUNT(DISTINCT brand) = 1
+    """
+    title_map: Dict[Tuple[str, str, str], str] = {}
+    with connection.cursor() as cursor:
+        cursor.execute(sql)
+        for platform_code, marketplace, normalized_title, brands in cursor.fetchall():
+            if not brands:
+                continue
+            title_map[(str(platform_code or "amazon"), str(marketplace or "").upper(), str(normalized_title or ""))] = brands[0]
+    return title_map
+
+
+def _resolve_brand_from_payload(
+    *,
+    platform_code: str,
+    marketplace_code: str,
+    asin: str,
+    payload: Dict[str, Any],
+    title_brand_map: Dict[Tuple[str, str, str], str],
+    manual_overrides: Dict[Tuple[str, str, str], str],
+) -> Optional[str]:
+    manual_brand = manual_overrides.get((platform_code, marketplace_code, asin))
+    if manual_brand:
+        return manual_brand
+
+    authoritative_brand, _ = extract_authoritative_brand_from_payload(payload or {})
+    if authoritative_brand:
+        return authoritative_brand
+
+    title_key = normalize_title_key((payload or {}).get("product_title") or (payload or {}).get("title"))
+    if title_key:
+        library_brand = title_brand_map.get((platform_code, marketplace_code, title_key))
+        if library_brand:
+            return library_brand
+
+    return extract_brand_from_payload(payload or {})
+
+
+def _backfill_staging_brand_values(
+    connection,
+    *,
+    segment_name: Optional[str] = None,
+    start_date: Optional[Any] = None,
+    end_date: Optional[Any] = None,
+    marketplace_code: Optional[str] = None,
+) -> int:
+    build_brand_registry(connection, marketplace_code=marketplace_code)
+    manual_overrides = _load_manual_brand_overrides(connection)
+    title_brand_map = _load_title_brand_library(connection)
+    target_scope_sql, target_scope_params = _build_staging_scope_sql(
+        segment_name=segment_name,
+        start_date=start_date,
+        end_date=end_date,
+        marketplace_code=marketplace_code,
+    )
+    if target_scope_sql == "TRUE":
+        asin_scope_sql = "TRUE"
+        asin_scope_params: List[Any] = []
+    else:
+        asin_scope_sql = f"""
+            EXISTS (
+                SELECT 1
+                FROM staging.stg_product_snapshot target
+                WHERE target.marketplace_country = s.marketplace_country
+                  AND target.asin = s.asin
+                  AND {target_scope_sql}
+            )
+        """
+        asin_scope_params = list(target_scope_params)
+    select_sql = f"""
+        SELECT
+            s.raw_event_id,
+            s.source_system,
+            s.marketplace_country,
+            s.asin,
+            s.brand,
+            r.response_body_jsonb
+        FROM staging.stg_product_snapshot s
+        JOIN raw.api_ingest_event r
+          ON s.raw_event_id = r.raw_event_id
+        WHERE {asin_scope_sql}
+    """
+    updates: List[tuple] = []
+    with connection.cursor() as cursor:
+        cursor.execute(select_sql, tuple(asin_scope_params))
+        for raw_event_id, platform_code, current_marketplace, asin, current_brand, payload in cursor.fetchall():
+            normalized_brand = _resolve_brand_from_payload(
+                platform_code=str(platform_code or "amazon"),
+                marketplace_code=str(current_marketplace or "").upper(),
+                asin=str(asin or ""),
+                payload=payload or {},
+                title_brand_map=title_brand_map,
+                manual_overrides=manual_overrides,
+            )
+            current_value = current_brand.strip() if isinstance(current_brand, str) else current_brand
+            if current_value != normalized_brand:
+                updates.append((normalized_brand, raw_event_id))
+
+    updated = 0
+    if updates:
+        with connection.cursor() as cursor:
+            cursor.executemany(
+                """
+                UPDATE staging.stg_product_snapshot
+                SET brand = %s
+                WHERE raw_event_id = %s
+                """,
+                updates,
+            )
+            updated += max(cursor.rowcount, 0)
+
+    scrub_sql = f"""
+        UPDATE staging.stg_product_snapshot s
+        SET brand = NULL
+        WHERE {asin_scope_sql}
+          AND brand IS NOT NULL
+          AND (
+              LOWER(brand) IN (
+                  'portable', 'mini', 'single', 'coffee', 'travel', 'compact',
+                  '3', '3-in-1', '6-in-1', 'cuban'
+              )
+              OR brand ~ '^[0-9]+(?:-in-[0-9]+)?$'
+          )
+    """
+    with connection.cursor() as cursor:
+        cursor.execute(scrub_sql, tuple(asin_scope_params))
+        updated += max(cursor.rowcount, 0)
+
+    propagate_sql = f"""
+        WITH latest_brand AS (
+            SELECT DISTINCT ON (marketplace_country, asin)
+                marketplace_country,
+                asin,
+                brand
+            FROM staging.stg_product_snapshot
+            WHERE brand IS NOT NULL AND brand <> ''
+            ORDER BY marketplace_country, asin, fetched_at DESC, raw_event_id DESC
+        )
+        UPDATE staging.stg_product_snapshot s
+        SET brand = COALESCE(s.brand, b.brand)
+        FROM latest_brand b
+        WHERE s.marketplace_country = b.marketplace_country
+          AND s.asin = b.asin
+          AND (s.brand IS NULL OR s.brand = '')
+          AND {asin_scope_sql}
+    """
+    with connection.cursor() as cursor:
+        cursor.execute(propagate_sql, tuple(asin_scope_params))
+        updated += max(cursor.rowcount, 0)
+    connection.commit()
+    return updated
+
+
+def backfill_staging_product_enrichment(
+    connection,
+    *,
+    segment_name: Optional[str] = None,
+    start_date: Optional[Any] = None,
+    end_date: Optional[Any] = None,
+    marketplace_code: Optional[str] = None,
+) -> int:
+    scope_sql, scope_params = _build_staging_scope_sql(
+        segment_name=segment_name,
+        start_date=start_date,
+        end_date=end_date,
+        marketplace_code=marketplace_code,
+    )
     category_sql = """
         WITH latest_category AS (
             SELECT DISTINCT ON (marketplace_country, asin)
@@ -630,6 +983,7 @@ def backfill_staging_product_enrichment(connection) -> int:
               s.category_id IS NULL OR s.category_id = ''
               OR s.category_name IS NULL OR s.category_name = ''
           )
+          AND {scope_sql}
     """
     bsr_sql = """
         WITH latest_bsr AS (
@@ -647,12 +1001,19 @@ def backfill_staging_product_enrichment(connection) -> int:
         WHERE s.marketplace_country = b.marketplace_country
           AND s.asin = b.asin
           AND s.bsr_rank IS NULL
+          AND {scope_sql}
     """
-    updated = 0
+    updated = _backfill_staging_brand_values(
+        connection,
+        segment_name=segment_name,
+        start_date=start_date,
+        end_date=end_date,
+        marketplace_code=marketplace_code,
+    )
     with connection.cursor() as cursor:
-        cursor.execute(category_sql)
+        cursor.execute(category_sql.format(scope_sql=scope_sql), tuple(scope_params))
         updated += max(cursor.rowcount, 0)
-        cursor.execute(bsr_sql)
+        cursor.execute(bsr_sql.format(scope_sql=scope_sql), tuple(scope_params))
         updated += max(cursor.rowcount, 0)
     connection.commit()
     return updated
@@ -797,6 +1158,10 @@ def build_core_dimensions(connection) -> int:
                 source_system,
                 account_name,
                 asin,
+                CASE
+                    WHEN COALESCE(brand, '') <> '' THEN 0
+                    ELSE 1
+                END,
                 CASE
                     WHEN COALESCE(category_name, '') <> '' OR COALESCE(category_id, '') <> '' THEN 0
                     ELSE 1
@@ -1257,6 +1622,12 @@ def build_mart_brand_market_share(connection) -> int:
     result["review_count"] = result["total_num_ratings"]
     result["last_observed_at"] = datetime.utcnow()
 
+    _delete_dataframe_scopes(
+        connection,
+        table="mart.mart_brand_market_share",
+        scope_columns=["observed_date", "platform_code", "marketplace_code", "category_id"],
+        df=result,
+    )
     return _upsert_dataframe(
         connection,
         table="mart.mart_brand_market_share",
@@ -1481,6 +1852,18 @@ def build_mart_segment_market_share(connection) -> int:
 
     share_df = pd.DataFrame(share_rows)
     stats_df = pd.DataFrame(stats_rows)
+    _delete_dataframe_scopes(
+        connection,
+        table="mart.mart_segment_market_share",
+        scope_columns=["observed_date", "platform_code", "marketplace_code", "segment_name"],
+        df=share_df,
+    )
+    _delete_dataframe_scopes(
+        connection,
+        table="mart.mart_segment_estimation_stats",
+        scope_columns=["observed_date", "platform_code", "marketplace_code", "segment_name"],
+        df=stats_df,
+    )
     share_count = _upsert_dataframe(
         connection,
         table="mart.mart_segment_market_share",
@@ -1619,35 +2002,6 @@ def run_postgres_pipeline(connection) -> Dict[str, int]:
     ensure_postgres_data_platform(connection)
     staging_products = build_staging_product_snapshot(connection)
     staging_enrichment = backfill_staging_product_enrichment(connection)
-    sample_staging_row: Optional[Sequence[Any]] = None
-    with connection.cursor() as cursor:
-        cursor.execute(
-            """
-            SELECT raw_event_id, asin, product_title, brand, currency, price, category_id, category_name
-            FROM staging.stg_product_snapshot
-            ORDER BY raw_event_id DESC
-            LIMIT 1
-            """
-        )
-        sample_staging_row = cursor.fetchone()
-    # region agent log
-    debug_log(
-        hypothesis_id="H5",
-        location="src/postgres_pipeline.py:run_postgres_pipeline",
-        message="Staging product snapshot sample",
-        data={
-            "staging_products": staging_products,
-            "latest_raw_event_id": sample_staging_row[0] if sample_staging_row else None,
-            "latest_asin": sample_staging_row[1] if sample_staging_row else None,
-            "latest_title": sample_staging_row[2] if sample_staging_row else None,
-            "latest_brand": sample_staging_row[3] if sample_staging_row else None,
-            "latest_currency": sample_staging_row[4] if sample_staging_row else None,
-            "latest_price": str(sample_staging_row[5]) if sample_staging_row and sample_staging_row[5] is not None else None,
-            "latest_category_id": sample_staging_row[6] if sample_staging_row else None,
-            "latest_category_name": sample_staging_row[7] if sample_staging_row else None,
-        },
-    )
-    # endregion
     result = {
         "staging_products": staging_products,
         "staging_enrichment": staging_enrichment,
@@ -1663,15 +2017,32 @@ def run_postgres_pipeline(connection) -> Dict[str, int]:
         "mart_segment_market_share": build_mart_segment_market_share(connection),
         "trend_alert": build_ops_trend_alerts(connection),
     }
-    # region agent log
-    debug_log(
-        hypothesis_id="H5",
-        location="src/postgres_pipeline.py:run_postgres_pipeline",
-        message="Postgres pipeline step counts",
-        data=result,
-    )
-    # endregion
     return result
+
+
+def backfill_postgres_brand_quality(
+    connection,
+    *,
+    segment_name: Optional[str] = None,
+    start_date: Optional[Any] = None,
+    end_date: Optional[Any] = None,
+    marketplace_code: Optional[str] = None,
+) -> Dict[str, int]:
+    ensure_postgres_data_platform(connection)
+    return {
+        "staging_enrichment": backfill_staging_product_enrichment(
+            connection,
+            segment_name=segment_name,
+            start_date=start_date,
+            end_date=end_date,
+            marketplace_code=marketplace_code,
+        ),
+        "core_dimensions": build_core_dimensions(connection),
+        "mart_product_daily_metrics": build_mart_product_daily_metrics(connection),
+        "mart_daily_sales_estimate": build_mart_daily_sales_estimate(connection),
+        "mart_brand_market_share": build_mart_brand_market_share(connection),
+        "mart_segment_market_share": build_mart_segment_market_share(connection),
+    }
 
 
 def log_schema_drift_event(

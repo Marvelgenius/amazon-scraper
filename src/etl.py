@@ -9,7 +9,6 @@ Supports both legacy hard-coded brand/category pipelines (OutIn / Coffee)
 and the new generic brand/category pipeline driven by parameters.
 """
 
-import html
 import json
 import logging
 import re
@@ -20,6 +19,11 @@ import numpy as np
 import pandas as pd
 import pymysql
 
+from .brand_utils import (
+    clean_brand_name,
+    clean_text_fragment,
+    extract_brand_from_payload,
+)
 from .sales_estimator import (
     BayesianDailySalesEstimator,
     CategoryParams,
@@ -587,53 +591,14 @@ def ensure_all_tables(connection: pymysql.Connection) -> None:
 # Helpers: text cleaning
 # ---------------------------------------------------------------------------
 
-_MARKETPLACE_PREFIX_RE = re.compile(
-    r"【[^】]*(?:限定|限り|セール|特選)[^】]*】\s*",
-)
-
-_CURLY_QUOTE_MAP = str.maketrans({
-    "\u2018": "'", "\u2019": "'",  # ' '
-    "\u201C": '"', "\u201D": '"',  # " "
-})
-
-_BRAND_ALIASES: Dict[str, str] = {
-    "de'longhi": "De'Longhi",
-    "delonghi": "De'Longhi",
-    "de longhi": "De'Longhi",
-    "nescafé": "NESCAFÉ",
-    "nescafe": "NESCAFÉ",
-    "black+decker": "BLACK+DECKER",
-}
-
-_BRAND_PREFIX_RE = re.compile(
-    r"^(de'?longhi|delonghi|デロンギ)", re.IGNORECASE,
-)
-
-
 def clean_text(text: Optional[str]) -> Optional[str]:
     """Decode HTML entities and strip marketplace-specific noise from text."""
-    if not text:
-        return text
-    text = html.unescape(str(text))
-    text = text.translate(_CURLY_QUOTE_MAP)
-    text = _MARKETPLACE_PREFIX_RE.sub("", text)
-    text = re.sub(r"\s+", " ", text).strip()
-    return text if text else None
+    return clean_text_fragment(text)
 
 
 def clean_brand(brand: Optional[str]) -> Optional[str]:
     """Normalize a brand name: decode entities, unify known aliases."""
-    if not brand:
-        return brand
-    brand = html.unescape(str(brand)).strip()
-    brand = brand.translate(_CURLY_QUOTE_MAP)
-    brand = _MARKETPLACE_PREFIX_RE.sub("", brand).strip()
-    lookup = brand.lower()
-    if lookup in _BRAND_ALIASES:
-        return _BRAND_ALIASES[lookup]
-    if _BRAND_PREFIX_RE.match(lookup):
-        return "De'Longhi"
-    return brand if brand else None
+    return clean_brand_name(brand)
 
 
 # ---------------------------------------------------------------------------
@@ -667,22 +632,7 @@ def parse_sales_volume(text: Optional[str]) -> Optional[int]:
 
 def extract_brand(payload: Dict[str, Any]) -> Optional[str]:
     """Extract brand from an API payload dict."""
-    product_info = payload.get("product_information", {})
-    if isinstance(product_info, dict):
-        brand = product_info.get("Brand") or product_info.get("brand")
-        if brand:
-            return str(brand).strip()
-
-    brand = payload.get("brand")
-    if brand:
-        return str(brand).strip()
-
-    title = payload.get("product_title") or payload.get("title") or ""
-    if title:
-        first_word = str(title).split()[0].strip(",.-") if str(title).split() else None
-        if first_word and len(first_word) > 1:
-            return first_word
-    return None
+    return extract_brand_from_payload(payload)
 
 
 def _safe_float(val: Any) -> Optional[float]:

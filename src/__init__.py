@@ -23,6 +23,8 @@ from .postgres_pipeline import (
     ensure_postgres_data_platform,
     run_postgres_pipeline,
     store_raw_api_events,
+    backfill_postgres_brand_quality,
+    upsert_brand_manual_override,
 )
 from .rapidapi_client import RapidAmazonDataClient, RapidAPIError
 from .sales_estimator import (

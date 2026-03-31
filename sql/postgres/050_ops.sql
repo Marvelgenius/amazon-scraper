@@ -72,3 +72,20 @@ CREATE TABLE IF NOT EXISTS ops.schema_drift_event (
     details_json JSONB NOT NULL DEFAULT '{}'::jsonb,
     detected_at TIMESTAMPTZ NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS ops.brand_manual_override (
+    brand_override_id BIGSERIAL PRIMARY KEY,
+    platform_code TEXT NOT NULL DEFAULT 'amazon',
+    marketplace_code TEXT NOT NULL,
+    asin TEXT NOT NULL,
+    brand TEXT NOT NULL,
+    note TEXT,
+    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE (platform_code, marketplace_code, asin)
+);
+
+CREATE INDEX IF NOT EXISTS idx_ops_brand_manual_override_marketplace_asin
+    ON ops.brand_manual_override (platform_code, marketplace_code, asin)
+    WHERE is_active;

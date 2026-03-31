@@ -33,6 +33,27 @@ CREATE TABLE IF NOT EXISTS core.dim_product (
     UNIQUE (platform_code, account_name, asin)
 );
 
+CREATE TABLE IF NOT EXISTS core.dim_brand_registry (
+    brand_registry_id BIGSERIAL PRIMARY KEY,
+    platform_code TEXT NOT NULL,
+    marketplace_code TEXT NOT NULL,
+    asin TEXT,
+    normalized_title TEXT NOT NULL,
+    brand TEXT NOT NULL,
+    source_type TEXT NOT NULL,
+    source_endpoint TEXT,
+    first_observed_at TIMESTAMPTZ,
+    last_observed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    observation_count INTEGER NOT NULL DEFAULT 1,
+    UNIQUE (platform_code, marketplace_code, normalized_title, brand, source_type)
+);
+
+CREATE INDEX IF NOT EXISTS idx_core_dim_brand_registry_title
+    ON core.dim_brand_registry (platform_code, marketplace_code, normalized_title);
+
+CREATE INDEX IF NOT EXISTS idx_core_dim_brand_registry_asin
+    ON core.dim_brand_registry (platform_code, marketplace_code, asin);
+
 CREATE TABLE IF NOT EXISTS core.bridge_product_identifier (
     bridge_id BIGSERIAL PRIMARY KEY,
     platform_code TEXT NOT NULL,

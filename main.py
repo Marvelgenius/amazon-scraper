@@ -218,19 +218,24 @@ def enrich_missing_product_details(
                             response_body_jsonb -> 'product_information' ->> 'Brand',
                             response_body_jsonb -> 'product_information' ->> 'brand',
                             response_body_jsonb ->> 'brand',
-                            NULLIF(
-                                REGEXP_REPLACE(
-                                    split_part(COALESCE(response_body_jsonb ->> 'product_title', ''), ' ', 1),
-                                    '(^[[:punct:]]+|[[:punct:]]+$)',
-                                    '',
-                                    'g'
-                                ),
-                                ''
-                            ),
                             ''
                         )
                     ) = ANY(%s::text[])
                 ) AS is_target_brand,
+                BOOL_OR(
+                    NULLIF(
+                        COALESCE(
+                            response_body_jsonb -> 'product_information' ->> 'Brand',
+                            response_body_jsonb -> 'product_information' ->> 'brand',
+                            response_body_jsonb ->> 'brand',
+                            response_body_jsonb ->> 'brand_name',
+                            ''
+                        ),
+                        ''
+                    ) IS NOT NULL
+                    OR COALESCE(response_body_jsonb ->> 'product_byline', '') ILIKE 'Brand:%'
+                    OR COALESCE(response_body_jsonb ->> 'product_byline', '') ILIKE 'Visit the % Store'
+                ) AS has_trusted_brand_signal,
                 BOOL_OR(
                     response_body_jsonb #>> '{category_path,-1,id}' IS NOT NULL
                     OR response_body_jsonb -> 'category' ->> 'id' IS NOT NULL
@@ -254,9 +259,15 @@ def enrich_missing_product_details(
               AND COALESCE(source_record_id, business_id) IS NOT NULL
             GROUP BY marketplace_country, COALESCE(source_record_id, business_id)
         )
-        SELECT asin, event_count, latest_fetched_at, latest_detail_at, is_target_brand, has_category_id_signal, has_category_name_signal, has_bsr_signal
+        SELECT asin, event_count, latest_fetched_at, latest_detail_at, is_target_brand, has_trusted_brand_signal, has_category_id_signal, has_category_name_signal, has_bsr_signal
         FROM asin_activity
-        WHERE (NOT has_category_id_signal OR NOT has_category_name_signal OR NOT has_bsr_signal OR latest_detail_at IS NULL)
+        WHERE (
+              NOT has_category_id_signal
+              OR NOT has_category_name_signal
+              OR NOT has_bsr_signal
+              OR NOT has_trusted_brand_signal
+              OR latest_detail_at IS NULL
+        )
           AND (
               latest_detail_at IS NULL
               OR latest_detail_at < NOW() - (%s || ' days')::interval
@@ -291,14 +302,17 @@ def enrich_missing_product_details(
             asin = row[0]
             event_count = row[1] or 0
             is_target_brand = bool(row[4])
-            has_category_id_signal = bool(row[5])
-            has_category_name_signal = bool(row[6])
-            has_bsr_signal = bool(row[7])
+            has_trusted_brand_signal = bool(row[5])
+            has_category_id_signal = bool(row[6])
+            has_category_name_signal = bool(row[7])
+            has_bsr_signal = bool(row[8])
             priority = 0
             if asin in target_asins:
                 priority += 1000
             if is_target_brand:
                 priority += 800
+            if not has_trusted_brand_signal:
+                priority += 220
             if not has_bsr_signal:
                 priority += 200
             if not has_category_id_signal:
